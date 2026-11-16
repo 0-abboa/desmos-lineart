@@ -183,14 +183,14 @@ function buildLineArt(grid, o) {
   const opts = Object.assign({
     preBlur: 4,             // smoother tone -> continuous lines instead of fragments
     toneGamma: 1.0,
-    toneCap: 0.95,         // let darks get genuinely dark
-    spacing: 1.6,          // denser field so midtones read as tone, not gaps
+    toneCap: 0.75,         // darks stay hatched; full black is what turned it to mud
+    spacing: 2.2,          // the density that actually read as a picture
     step: 1.2,             // sampling step along a line
     widthBase: 0.8,
-    thr: 0.08,             // brightness floor: below this the paper stays blank
+    thr: 0.12,             // brightness floor: below this the paper stays blank
     angles: [-Math.PI / 4, Math.PI / 4, 0],  // successive cross-hatch layers
-    layerTones: [0.0, 0.35, 0.60],           // tone at which each layer starts
-    layerSpacing: [1, 1.15, 1.35],           // per-layer spacing multipliers
+    layerTones: [0.0, 0.45, 0.72],           // tone at which each layer starts
+    layerSpacing: [1, 1.2, 1.5],             // per-layer spacing multipliers
     edgePass: true,
     edgeMag: 0.26,
     edgeSteps: 90,

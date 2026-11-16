@@ -104,7 +104,8 @@ function buildSketch(grid, o) {
     sigmas: [1.2, 3.0],        // fine detail + larger structure, so faces are not left blank
     k: 1.8,
     gate: 0.02,
-    minLen: 6,
+    minLen: 14,                // short fragments are noise, not drawn features
+    minSpan: 10,               // pixels; rejects specks even if they have many points
     eps: 0.6,
     smoothIters: 2
   }, o || {});
@@ -153,6 +154,13 @@ function buildSketch(grid, o) {
 
       const simp = rdp(pts, opts.eps);
       if (simp.length < 2) continue;
+      // reject specks: a curve has to actually span some distance
+      let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+      for (const [px, py] of simp) {
+        if (px < minX) minX = px; if (px > maxX) maxX = px;
+        if (py < minY) minY = py; if (py > maxY) maxY = py;
+      }
+      if (Math.hypot(maxX - minX, maxY - minY) < opts.minSpan) continue;
       // smooth away the pixel staircase so strokes read as drawn curves
       lines.push(opts.smoothIters ? chaikin(simp, opts.smoothIters) : simp);
       total += simp.length;
