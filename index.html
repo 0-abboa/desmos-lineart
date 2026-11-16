@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Image to Desmos line art</title>
+<!-- Desmos API key: placeholder. Replace *** with your own key from desmos.com/api -->
+<script src="https://www.desmos.com/api/v1.10/calculator.js?apiKey=***"></script>
+<script src="contour.js"></script>
+<style>
+  body{font-family:system-ui,sans-serif;margin:0;display:flex;height:100vh}
+  #side{width:300px;padding:16px;box-sizing:border-box;border-right:1px solid #ddd;overflow:auto}
+  #side h3{margin:0 0 8px}
+  #side label{display:block;margin-top:10px;font-size:13px}
+  #side input[type=range]{width:100%}
+  #side button{margin-top:10px;padding:8px;width:100%;cursor:pointer}
+  #main{flex:1;display:flex}
+  #calc{flex:1;height:100%}
+</style>
+</head>
+<body>
+<div id="side">
+  <h3>Image to Desmos</h3>
+  <input type="file" id="file" accept="image/*">
+
+  <label>Resolution <span id="resV"></span>
+    <input type="range" id="res" min="40" max="300" step="5" value="160"></label>
+  <label>Contrast (gamma) <span id="gammaV"></span>
+    <input type="range" id="gamma" min="0.3" max="3" step="0.05" value="1"></label>
+  <label>Tone levels (more = more shading) <span id="levelsV"></span>
+    <input type="range" id="levels" min="1" max="10" step="1" value="5"></label>
+  <label>Smoothing passes <span id="blurV"></span>
+    <input type="range" id="blur" min="0" max="4" step="1" value="1"></label>
+  <label>Min points per curve <span id="minLenV"></span>
+    <input type="range" id="minLen" min="2" max="30" step="1" value="6"></label>
+
+  <button id="draw">Draw image</button>
+  <button id="clear">Clear</button>
+  <p id="info" style="font-size:12px;color:#555"></p>
+</div>
+<div id="main"><div id="calc"></div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const WORLD_W = 100;   // image width in Desmos units; height follows aspect ratio
+let img = null, calc = null;
+
+['res','gamma','levels','blur','minLen'].forEach(id => {
+  const show = () => $(id + 'V').textContent = $(id).value;
+  $(id).addEventListener('input', show); show();
+});
+
+$('file').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const im = new Image();
+  im.onload = () => { img = im; $('info').textContent = `Loaded ${im.width}x${im.height}. Click Draw image.`; };
+  im.src = URL.createObjectURL(f);
+});
+
+// Image -> grid of darkness values (0 = white, 1 = black), with gamma and smoothing.
+function buildGrid() {
+  const R = +$('res').value;
+  const s = Math.min(1, R / Math.max(img.width, img.height));
+  const w = Math.max(2, Math.round(img.width * s));
+  const h = Math.max(2, Math.round(img.height * s));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0, w, h);
+  const px = g.getImageData(0, 0, w, h).data;
+  const gam = +$('gamma').value;
+  const d = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const L = (0.299 * px[4*i] + 0.587 * px[4*i+1] + 0.114 * px[4*i+2]) / 255;
+    d[i] = Math.pow(1 - L, gam);
+  }
+  const v = boxBlur(d, w, h, +$('blur').value);
+  const H = WORLD_W * h / w;
+  return { w, h, v, dx: WORLD_W / (w - 1), dy: H / (h - 1), H };
+}
+
+function ensureCalc() {
+  if (typeof Desmos === 'undefined') {
+    $('info').textContent = 'Desmos failed to load: replace apiKey=*** in index.html with a real key from desmos.com/api.';
+    return null;
+  }
+  if (!calc) calc = Desmos.GraphingCalculator($('calc'), {
+    keypad: false, expressions: true, settingsMenu: false, showGrid: false
+  });
+}
+
+// Each traced curve becomes one Desmos table with connected lines (not one equation per pixel).
+function tableFor(n, xs, ys) {
+  const fx = xs.map(v => v.toFixed(3)), fy = ys.map(v => v.toFixed(3));
+  return {
+    id: 't' + n, type: 'table',
+    columns: [
+      { id: 'x' + n, latex: 'x_{' + n + '}', values: fx, points: false, lines: true, color: '#000000' },
+      { id: 'y' + n, latex: 'y_{' + n + '}', values: fy, points: false, lines: true, color: '#000000' }
+    ]
+  };
+}
+
+$('draw').addEventListener('click', () => {
+  if (!img) { $('info').textContent = 'Pick an image first.'; return; }
+  $('info').textContent = 'Tracing...';
+  // Let the browser repaint the status before the heavy work.
+  setTimeout(() => {
+    const g = buildGrid();
+    const N = +$('levels').value, minLen = +$('minLen').value;
+    const tables = [];
+    let points = 0;
+    for (let k = 1; k <= N; k++) {
+      const L = k / (N + 1);
+      for (const line of contourLines(g, L, minLen)) {
+        tables.push(tableFor(tables.length, line.xs, line.ys));
+        points += line.xs.length;
+      }
+    }
+    const c = ensureCalc();
+    if (!c) return;
+    c.setBlank();
+    c.setExpressions(tables);
+    c.setMathBounds({ left: -5, right: WORLD_W + 5, top: g.H + 5, bottom: -5 });
+    $('info').textContent = `${tables.length} curves, ${points} points` +
+      (points > 60000 ? ' (large: Desmos may be slow; lower resolution or raise min points)' : '') + '.';
+  }, 30);
+});
+
+$('clear').addEventListener('click', () => { const c = ensureCalc(); if (c) c.setBlank(); });
+</script>
+</body>
+</html>
