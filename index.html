@@ -88,6 +88,7 @@ function ensureCalc() {
   if (!calc) calc = Desmos.GraphingCalculator($('calc'), {
     keypad: false, expressions: true, settingsMenu: false, showGrid: false
   });
+  return calc;
 }
 
 // Each traced curve becomes one Desmos table with connected lines (not one equation per pixel).
