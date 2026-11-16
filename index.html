@@ -6,17 +6,14 @@
 <title>Image to line art</title>
 <style>
   body{font-family:system-ui,sans-serif;margin:0;display:flex;height:100vh}
-  #side{width:300px;padding:16px;box-sizing:border-box;border-right:1px solid #ddd;overflow:auto;flex:none}
+  #side{width:310px;padding:16px;box-sizing:border-box;border-right:1px solid #ddd;overflow:auto;flex:none}
   #side h3{margin:0 0 8px}
   #side label{display:block;margin-top:10px;font-size:13px}
   #side input[type=range]{width:100%}
   #side button{margin-top:10px;padding:8px;width:100%;cursor:pointer}
-  #main{flex:1;position:relative;background:#fff;min-width:0}
+  #main{flex:1;position:relative;background:#fff;min-width:0;display:flex;align-items:center;justify-content:center}
   #svg{width:100%;height:100%;display:block}
-  #calc{position:absolute;inset:0;display:none}
-  #calc.on{display:block}
-  #svg.off{display:none}
-  .muted{color:#666;font-size:12px}
+  .muted{color:#666;font-size:12px;line-height:1.45}
 </style>
 </head>
 <body>
@@ -25,39 +22,39 @@
   <input type="file" id="file" accept="image/*">
 
   <label>Resolution <span id="resV"></span>
-    <input type="range" id="res" min="40" max="300" step="5" value="160"></label>
-  <label>Contrast (gamma) <span id="gammaV"></span>
-    <input type="range" id="gamma" min="0.3" max="3" step="0.05" value="1"></label>
-  <label>Tone levels <span id="levelsV"></span>
-    <input type="range" id="levels" min="1" max="10" step="1" value="5"></label>
-  <label>Smoothing passes <span id="blurV"></span>
-    <input type="range" id="blur" min="0" max="4" step="1" value="1"></label>
-  <label>Min points per curve <span id="minLenV"></span>
-    <input type="range" id="minLen" min="2" max="30" step="1" value="6"></label>
+    <input type="range" id="res" min="160" max="700" step="20" value="480"></label>
+  <label>Contrast <span id="gammaV"></span>
+    <input type="range" id="gamma" min="0.4" max="2.2" step="0.05" value="1"></label>
+  <label>Smoothing <span id="smoothV"></span>
+    <input type="range" id="smooth" min="1" max="8" step="1" value="5"></label>
+  <label>Line spacing <span id="spacingV"></span>
+    <input type="range" id="spacing" min="1.4" max="4" step="0.1" value="2.2"></label>
+  <label>Darkness floor <span id="thrV"></span>
+    <input type="range" id="thr" min="0.02" max="0.40" step="0.01" value="0.14"></label>
+  <label style="margin-top:12px">Output
+    <select id="mode" style="width:100%;margin-top:4px;padding:4px">
+      <option value="both">Hatching + edges</option>
+      <option value="hatch">Hatching only</option>
+      <option value="edges">Edges only</option>
+    </select>
+  </label>
 
   <button id="draw">Draw image</button>
   <button id="clear">Clear</button>
   <button id="save">Save as SVG</button>
 
-  <label style="margin-top:16px">
-    <input type="checkbox" id="useDesmos"> Render in Desmos instead
-  </label>
-  <p class="muted">Desmos is proprietary. Its API key is licensed for prototyping only, and the embed shows a licensing modal. The built-in renderer needs no key and no network.</p>
-
   <p id="info" class="muted"></p>
+  <p class="muted">Engraving-style hatching: parallel strokes whose density carries the tone. Smoothing trades detail for cleaner lines - raise it if busy areas turn muddy.</p>
 </div>
-<div id="main">
-  <svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg>
-  <div id="calc"></div>
-</div>
+<div id="main"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
 
-<script src="contour.js"></script>
+<script src="lineart.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-const WORLD_W = 100;          // image width in graph units; height follows aspect ratio
-let img = null, calc = null, lastLines = null, lastH = 100;
+const WORLD_W = 100;             // drawing width in graph units
+let img = null, lastArt = null, lastH = 100;
 
-['res','gamma','levels','blur','minLen'].forEach(id => {
+['res','gamma','smooth','spacing','thr'].forEach(id => {
   const show = () => $(id + 'V').textContent = $(id).value;
   $(id).addEventListener('input', show); show();
 });
@@ -66,163 +63,107 @@ $('file').addEventListener('change', e => {
   const f = e.target.files[0];
   if (!f) return;
   const im = new Image();
-  im.onload = () => { img = im; $('info').textContent = `Loaded ${im.width}x${im.height}. Click Draw image.`; };
+  im.onload = () => {
+    img = im;
+    $('info').textContent = `Loaded ${im.width}x${im.height}. Click Draw image.`;
+  };
   im.src = URL.createObjectURL(f);
 });
 
-// Image -> grid of darkness values (0 = white, 1 = black), gamma-adjusted and smoothed.
+// Image -> darkness grid (0 = white, 1 = black).
 function buildGrid() {
   const R = +$('res').value;
   const s = Math.min(1, R / Math.max(img.width, img.height));
-  const w = Math.max(2, Math.round(img.width * s));
-  const h = Math.max(2, Math.round(img.height * s));
+  const w = Math.max(8, Math.round(img.width * s));
+  const h = Math.max(8, Math.round(img.height * s));
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  const g = c.getContext('2d');
-  g.drawImage(img, 0, 0, w, h);
-  const px = g.getImageData(0, 0, w, h).data;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  const px = ctx.getImageData(0, 0, w, h).data;
   const gam = +$('gamma').value;
-  const d = new Float32Array(w * h);
+  const v = new Float32Array(w * h);
   for (let i = 0; i < w * h; i++) {
     const L = (0.299 * px[4*i] + 0.587 * px[4*i+1] + 0.114 * px[4*i+2]) / 255;
-    d[i] = Math.pow(1 - L, gam);
+    v[i] = Math.pow(1 - L, gam);
   }
-  const v = boxBlur(d, w, h, +$('blur').value);
-  const H = WORLD_W * h / w;
-  return { w, h, v, dx: WORLD_W / (w - 1), dy: H / (h - 1), H };
+  return { w, h, v, H: WORLD_W * h / w };
 }
 
-// ---------- built-in renderer (no third-party code, no network) ----------
-function renderSVG(lines, H) {
+// Draw strokes as a few paths, bucketed by width so line weight can vary.
+function renderSVG(art, H) {
   const svg = $('svg');
-  const W = Math.round(svg.clientWidth || window.innerWidth * 0.68);
+  const W = Math.round(svg.clientWidth || window.innerWidth * 0.66);
   const HH = Math.round(svg.clientHeight || window.innerHeight);
   svg.setAttribute('viewBox', `0 0 ${W} ${HH}`);
 
-  const pad = 34;
-  const s = Math.min((W - 2 * pad) / WORLD_W, (HH - 2 * pad) / Math.max(H, 1));
-  const ox = (W - WORLD_W * s) / 2;
-  const oy = (HH - H * s) / 2;
-  const px = x => ox + x * s;
-  const py = y => HH - oy - y * s;
+  const pad = 16;
+  const gw = art.gridW, gh = art.gridH;
+  const sc = Math.min((W - 2*pad) / gw, (HH - 2*pad) / gh);
+  const ox = (W - gw*sc) / 2, oy = (HH - gh*sc) / 2;
+  const px = x => ox + x*sc, py = y => oy + y*sc;
 
-  const parts = [`<rect width="${W}" height="${HH}" fill="#fff"/>`];
-
-  // light grid every 10 units
-  for (let x = 0; x <= WORLD_W; x += 10) {
-    parts.push(`<line x1="${px(x).toFixed(1)}" y1="${py(0).toFixed(1)}" x2="${px(x).toFixed(1)}" y2="${py(H).toFixed(1)}" stroke="#eee" stroke-width="1"/>`);
+  const buckets = new Map();
+  for (const st of art.strokes) {
+    const key = Math.round(st.width * 8) / 8;      // quantise weight
+    let d = buckets.get(key);
+    if (d === undefined) { d = ''; buckets.set(key, d); }
+    d += `M${px(st.xs[0]).toFixed(1)} ${py(st.ys[0]).toFixed(1)}`;
+    for (let i = 1; i < st.xs.length; i++) {
+      d += `L${px(st.xs[i]).toFixed(1)} ${py(st.ys[i]).toFixed(1)}`;
+    }
+    buckets.set(key, d);
   }
-  for (let y = 0; y <= H; y += 10) {
-    parts.push(`<line x1="${px(0).toFixed(1)}" y1="${py(y).toFixed(1)}" x2="${px(WORLD_W).toFixed(1)}" y2="${py(y).toFixed(1)}" stroke="#eee" stroke-width="1"/>`);
+
+  let html = `<rect width="${W}" height="${HH}" fill="#fff"/>`;
+  for (const [wgt, d] of buckets) {
+    html += `<path d="${d}" fill="none" stroke="#000" stroke-width="${wgt.toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
-  // axes
-  parts.push(`<line x1="${px(0)}" y1="${py(0)}" x2="${px(WORLD_W)}" y2="${py(0)}" stroke="#bbb" stroke-width="1"/>`);
-  parts.push(`<line x1="${px(0)}" y1="${py(0)}" x2="${px(0)}" y2="${py(H)}" stroke="#bbb" stroke-width="1"/>`);
-
-  let d = '';
-  for (const line of lines) {
-    const n = line.xs.length;
-    if (n < 2) continue;
-    d += `M${px(line.xs[0]).toFixed(1)} ${py(line.ys[0]).toFixed(1)}`;
-    for (let i = 1; i < n; i++) d += `L${px(line.xs[i]).toFixed(1)} ${py(line.ys[i]).toFixed(1)}`;
-  }
-  parts.push(`<path d="${d}" fill="none" stroke="#000" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>`);
-  svg.innerHTML = parts.join('');
+  svg.innerHTML = html;
 }
 
-// ---------- optional Desmos embed (loaded only if requested) ----------
-// Trial key: Desmos licenses this for prototyping only. The built-in renderer needs no key.
-const DESMOS_KEY = 'b1bf10dbe2ab4cc28575b82cfe7d15ed';
-function loadDesmos() {
-  return new Promise((resolve, reject) => {
-    if (typeof Desmos !== 'undefined') return resolve();
-    const s = document.createElement('script');
-    s.src = 'https://www.desmos.com/api/v1.10/calculator.js?apiKey=' + DESMOS_KEY;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error('Desmos script failed to load'));
-    document.head.appendChild(s);
-  });
-}
-
-function ensureCalc() {
-  if (typeof Desmos === 'undefined') {
-    $('info').textContent = 'Desmos did not load. Untick the Desmos option to use the built-in renderer.';
-    return null;
-  }
-  if (!calc) calc = Desmos.GraphingCalculator($('calc'), {
-    keypad: false, expressions: true, settingsMenu: false, showGrid: false
-  });
-  return calc;
-}
-
-function tableFor(n, xs, ys) {
-  const fx = xs.map(v => v.toFixed(3)), fy = ys.map(v => v.toFixed(3));
-  return {
-    id: 't' + n, type: 'table',
-    columns: [
-      { id: 'x' + n, latex: 'x_{' + n + '}', values: fx, points: false, lines: true, color: '#000000' },
-      { id: 'y' + n, latex: 'y_{' + n + '}', values: fy, points: false, lines: true, color: '#000000' }
-    ]
-  };
-}
-
-function drawDesmos(lines, H) {
-  return loadDesmos().then(() => {
-    const c = ensureCalc();
-    if (!c) return;
-    c.setBlank();
-    c.setExpressions(lines.map((l, i) => tableFor(i, l.xs, l.ys)));
-    c.setMathBounds({ left: -5, right: WORLD_W + 5, top: H + 5, bottom: -5 });
-  }).catch(err => {
-    $('info').textContent = 'Desmos unavailable (' + err.message + '). Untick the option to use the built-in renderer.';
-  });
-}
-
-// ---------- actions ----------
 $('draw').addEventListener('click', () => {
   if (!img) { $('info').textContent = 'Pick an image first.'; return; }
-  $('info').textContent = 'Tracing...';
+  $('info').textContent = 'Drawing...';
   setTimeout(() => {
     try {
-      const g = buildGrid();
-      const N = +$('levels').value, minLen = +$('minLen').value;
-      const lines = [];
-      let points = 0;
-      for (let k = 1; k <= N; k++) {
-        for (const line of contourLines(g, k / (N + 1), minLen)) {
-          lines.push(line);
-          points += line.xs.length;
-        }
-      }
-      lastLines = lines; lastH = g.H;
-
-      const useDesmos = $('useDesmos').checked;
-      $('svg').classList.toggle('off', useDesmos);
-      $('calc').classList.toggle('on', useDesmos);
-      if (useDesmos) drawDesmos(lines, g.H); else renderSVG(lines, g.H);
-
-      $('info').textContent = `${lines.length} curves, ${points} points.`;
-    } catch (e) {
-      $('info').textContent = 'Error: ' + e.message;
-      throw e;
+      const grid = buildGrid();
+      const t0 = performance.now();
+      const mode = $('mode').value;
+      const opts = {
+        preBlur: +$('smooth').value,
+        spacing: +$('spacing').value,
+        thr: +$('thr').value,
+        edgePass: mode !== 'hatch'
+      };
+      if (mode === 'edges') opts.angles = [];   // no hatch layers at all
+      const art = buildLineArt(grid, opts);
+      const ms = Math.round(performance.now() - t0);
+      lastArt = art; lastH = grid.H;
+      renderSVG(art, grid.H);
+      let pts = 0;
+      for (const st of art.strokes) pts += st.xs.length;
+      $('info').textContent = `${art.strokes.length} strokes, ${pts} points, ${ms}ms.`;
+    } catch (err) {
+      $('info').textContent = 'Error: ' + err.message;
+      throw err;
     }
   }, 30);
 });
 
 $('clear').addEventListener('click', () => {
   $('svg').innerHTML = '';
-  if (calc) calc.setBlank();
   $('info').textContent = '';
-  lastLines = null;
+  lastArt = null;
 });
 
 $('save').addEventListener('click', () => {
-  if (!lastLines) { $('info').textContent = 'Draw something first.'; return; }
+  if (!lastArt) { $('info').textContent = 'Draw something first.'; return; }
   const svg = $('svg');
   const clone = svg.cloneNode(true);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  clone.setAttribute('width', svg.clientWidth || 800);
-  clone.setAttribute('height', svg.clientHeight || 600);
+  clone.setAttribute('width', svg.clientWidth || 900);
+  clone.setAttribute('height', svg.clientHeight || 900);
   const blob = new Blob([clone.outerHTML], { type: 'image/svg+xml' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -231,11 +172,10 @@ $('save').addEventListener('click', () => {
   URL.revokeObjectURL(a.href);
 });
 
-// keep the drawing fitted when the window resizes
 let rt;
 window.addEventListener('resize', () => {
   clearTimeout(rt);
-  rt = setTimeout(() => { if (lastLines && !$('useDesmos').checked) renderSVG(lastLines, lastH); }, 150);
+  rt = setTimeout(() => { if (lastArt) renderSVG(lastArt, lastH); }, 150);
 });
 </script>
 </body>
