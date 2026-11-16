@@ -3,31 +3,32 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Image to Desmos line art</title>
-<!-- Desmos API key: placeholder. Replace *** with your own key from desmos.com/api -->
-<script src="https://www.desmos.com/api/v1.10/calculator.js?apiKey=b1bf10dbe2ab4cc28575b82cfe7d15ed"></script>
-<script src="contour.js"></script>
+<title>Image to line art</title>
 <style>
   body{font-family:system-ui,sans-serif;margin:0;display:flex;height:100vh}
-  #side{width:300px;padding:16px;box-sizing:border-box;border-right:1px solid #ddd;overflow:auto}
+  #side{width:300px;padding:16px;box-sizing:border-box;border-right:1px solid #ddd;overflow:auto;flex:none}
   #side h3{margin:0 0 8px}
   #side label{display:block;margin-top:10px;font-size:13px}
   #side input[type=range]{width:100%}
   #side button{margin-top:10px;padding:8px;width:100%;cursor:pointer}
-  #main{flex:1;display:flex}
-  #calc{flex:1;height:100%}
+  #main{flex:1;position:relative;background:#fff;min-width:0}
+  #svg{width:100%;height:100%;display:block}
+  #calc{position:absolute;inset:0;display:none}
+  #calc.on{display:block}
+  #svg.off{display:none}
+  .muted{color:#666;font-size:12px}
 </style>
 </head>
 <body>
 <div id="side">
-  <h3>Image to Desmos</h3>
+  <h3>Image to line art</h3>
   <input type="file" id="file" accept="image/*">
 
   <label>Resolution <span id="resV"></span>
     <input type="range" id="res" min="40" max="300" step="5" value="160"></label>
   <label>Contrast (gamma) <span id="gammaV"></span>
     <input type="range" id="gamma" min="0.3" max="3" step="0.05" value="1"></label>
-  <label>Tone levels (more = more shading) <span id="levelsV"></span>
+  <label>Tone levels <span id="levelsV"></span>
     <input type="range" id="levels" min="1" max="10" step="1" value="5"></label>
   <label>Smoothing passes <span id="blurV"></span>
     <input type="range" id="blur" min="0" max="4" step="1" value="1"></label>
@@ -36,14 +37,25 @@
 
   <button id="draw">Draw image</button>
   <button id="clear">Clear</button>
-  <p id="info" style="font-size:12px;color:#555"></p>
-</div>
-<div id="main"><div id="calc"></div></div>
+  <button id="save">Save as SVG</button>
 
+  <label style="margin-top:16px">
+    <input type="checkbox" id="useDesmos"> Render in Desmos instead
+  </label>
+  <p class="muted">Desmos is proprietary. Its API key is licensed for prototyping only, and the embed shows a licensing modal. The built-in renderer needs no key and no network.</p>
+
+  <p id="info" class="muted"></p>
+</div>
+<div id="main">
+  <svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg>
+  <div id="calc"></div>
+</div>
+
+<script src="contour.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-const WORLD_W = 100;   // image width in Desmos units; height follows aspect ratio
-let img = null, calc = null;
+const WORLD_W = 100;          // image width in graph units; height follows aspect ratio
+let img = null, calc = null, lastLines = null, lastH = 100;
 
 ['res','gamma','levels','blur','minLen'].forEach(id => {
   const show = () => $(id + 'V').textContent = $(id).value;
@@ -58,7 +70,7 @@ $('file').addEventListener('change', e => {
   im.src = URL.createObjectURL(f);
 });
 
-// Image -> grid of darkness values (0 = white, 1 = black), with gamma and smoothing.
+// Image -> grid of darkness values (0 = white, 1 = black), gamma-adjusted and smoothed.
 function buildGrid() {
   const R = +$('res').value;
   const s = Math.min(1, R / Math.max(img.width, img.height));
@@ -80,9 +92,61 @@ function buildGrid() {
   return { w, h, v, dx: WORLD_W / (w - 1), dy: H / (h - 1), H };
 }
 
+// ---------- built-in renderer (no third-party code, no network) ----------
+function renderSVG(lines, H) {
+  const svg = $('svg');
+  const W = Math.round(svg.clientWidth || window.innerWidth * 0.68);
+  const HH = Math.round(svg.clientHeight || window.innerHeight);
+  svg.setAttribute('viewBox', `0 0 ${W} ${HH}`);
+
+  const pad = 34;
+  const s = Math.min((W - 2 * pad) / WORLD_W, (HH - 2 * pad) / Math.max(H, 1));
+  const ox = (W - WORLD_W * s) / 2;
+  const oy = (HH - H * s) / 2;
+  const px = x => ox + x * s;
+  const py = y => HH - oy - y * s;
+
+  const parts = [`<rect width="${W}" height="${HH}" fill="#fff"/>`];
+
+  // light grid every 10 units
+  for (let x = 0; x <= WORLD_W; x += 10) {
+    parts.push(`<line x1="${px(x).toFixed(1)}" y1="${py(0).toFixed(1)}" x2="${px(x).toFixed(1)}" y2="${py(H).toFixed(1)}" stroke="#eee" stroke-width="1"/>`);
+  }
+  for (let y = 0; y <= H; y += 10) {
+    parts.push(`<line x1="${px(0).toFixed(1)}" y1="${py(y).toFixed(1)}" x2="${px(WORLD_W).toFixed(1)}" y2="${py(y).toFixed(1)}" stroke="#eee" stroke-width="1"/>`);
+  }
+  // axes
+  parts.push(`<line x1="${px(0)}" y1="${py(0)}" x2="${px(WORLD_W)}" y2="${py(0)}" stroke="#bbb" stroke-width="1"/>`);
+  parts.push(`<line x1="${px(0)}" y1="${py(0)}" x2="${px(0)}" y2="${py(H)}" stroke="#bbb" stroke-width="1"/>`);
+
+  let d = '';
+  for (const line of lines) {
+    const n = line.xs.length;
+    if (n < 2) continue;
+    d += `M${px(line.xs[0]).toFixed(1)} ${py(line.ys[0]).toFixed(1)}`;
+    for (let i = 1; i < n; i++) d += `L${px(line.xs[i]).toFixed(1)} ${py(line.ys[i]).toFixed(1)}`;
+  }
+  parts.push(`<path d="${d}" fill="none" stroke="#000" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>`);
+  svg.innerHTML = parts.join('');
+}
+
+// ---------- optional Desmos embed (loaded only if requested) ----------
+// Trial key: Desmos licenses this for prototyping only. The built-in renderer needs no key.
+const DESMOS_KEY = 'b1bf10dbe2ab4cc28575b82cfe7d15ed';
+function loadDesmos() {
+  return new Promise((resolve, reject) => {
+    if (typeof Desmos !== 'undefined') return resolve();
+    const s = document.createElement('script');
+    s.src = 'https://www.desmos.com/api/v1.10/calculator.js?apiKey=' + DESMOS_KEY;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Desmos script failed to load'));
+    document.head.appendChild(s);
+  });
+}
+
 function ensureCalc() {
   if (typeof Desmos === 'undefined') {
-    $('info').textContent = 'Desmos failed to load: the API key is missing, invalid, or not registered for this domain.';
+    $('info').textContent = 'Desmos did not load. Untick the Desmos option to use the built-in renderer.';
     return null;
   }
   if (!calc) calc = Desmos.GraphingCalculator($('calc'), {
@@ -91,7 +155,6 @@ function ensureCalc() {
   return calc;
 }
 
-// Each traced curve becomes one Desmos table with connected lines (not one equation per pixel).
 function tableFor(n, xs, ys) {
   const fx = xs.map(v => v.toFixed(3)), fy = ys.map(v => v.toFixed(3));
   return {
@@ -103,33 +166,77 @@ function tableFor(n, xs, ys) {
   };
 }
 
-$('draw').addEventListener('click', () => {
-  if (!img) { $('info').textContent = 'Pick an image first.'; return; }
-  $('info').textContent = 'Tracing...';
-  // Let the browser repaint the status before the heavy work.
-  setTimeout(() => {
-    const g = buildGrid();
-    const N = +$('levels').value, minLen = +$('minLen').value;
-    const tables = [];
-    let points = 0;
-    for (let k = 1; k <= N; k++) {
-      const L = k / (N + 1);
-      for (const line of contourLines(g, L, minLen)) {
-        tables.push(tableFor(tables.length, line.xs, line.ys));
-        points += line.xs.length;
-      }
-    }
+function drawDesmos(lines, H) {
+  return loadDesmos().then(() => {
     const c = ensureCalc();
     if (!c) return;
     c.setBlank();
-    c.setExpressions(tables);
-    c.setMathBounds({ left: -5, right: WORLD_W + 5, top: g.H + 5, bottom: -5 });
-    $('info').textContent = `${tables.length} curves, ${points} points` +
-      (points > 60000 ? ' (large: Desmos may be slow; lower resolution or raise min points)' : '') + '.';
+    c.setExpressions(lines.map((l, i) => tableFor(i, l.xs, l.ys)));
+    c.setMathBounds({ left: -5, right: WORLD_W + 5, top: H + 5, bottom: -5 });
+  }).catch(err => {
+    $('info').textContent = 'Desmos unavailable (' + err.message + '). Untick the option to use the built-in renderer.';
+  });
+}
+
+// ---------- actions ----------
+$('draw').addEventListener('click', () => {
+  if (!img) { $('info').textContent = 'Pick an image first.'; return; }
+  $('info').textContent = 'Tracing...';
+  setTimeout(() => {
+    try {
+      const g = buildGrid();
+      const N = +$('levels').value, minLen = +$('minLen').value;
+      const lines = [];
+      let points = 0;
+      for (let k = 1; k <= N; k++) {
+        for (const line of contourLines(g, k / (N + 1), minLen)) {
+          lines.push(line);
+          points += line.xs.length;
+        }
+      }
+      lastLines = lines; lastH = g.H;
+
+      const useDesmos = $('useDesmos').checked;
+      $('svg').classList.toggle('off', useDesmos);
+      $('calc').classList.toggle('on', useDesmos);
+      if (useDesmos) drawDesmos(lines, g.H); else renderSVG(lines, g.H);
+
+      $('info').textContent = `${lines.length} curves, ${points} points.`;
+    } catch (e) {
+      $('info').textContent = 'Error: ' + e.message;
+      throw e;
+    }
   }, 30);
 });
 
-$('clear').addEventListener('click', () => { const c = ensureCalc(); if (c) c.setBlank(); });
+$('clear').addEventListener('click', () => {
+  $('svg').innerHTML = '';
+  if (calc) calc.setBlank();
+  $('info').textContent = '';
+  lastLines = null;
+});
+
+$('save').addEventListener('click', () => {
+  if (!lastLines) { $('info').textContent = 'Draw something first.'; return; }
+  const svg = $('svg');
+  const clone = svg.cloneNode(true);
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('width', svg.clientWidth || 800);
+  clone.setAttribute('height', svg.clientHeight || 600);
+  const blob = new Blob([clone.outerHTML], { type: 'image/svg+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'lineart.svg';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+// keep the drawing fitted when the window resizes
+let rt;
+window.addEventListener('resize', () => {
+  clearTimeout(rt);
+  rt = setTimeout(() => { if (lastLines && !$('useDesmos').checked) renderSVG(lastLines, lastH); }, 150);
+});
 </script>
 </body>
 </html>
