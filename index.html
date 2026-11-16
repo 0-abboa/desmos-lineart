@@ -6,11 +6,12 @@
 <title>Image to line art</title>
 <style>
   body{font-family:system-ui,sans-serif;margin:0;display:flex;height:100vh}
-  #side{width:310px;padding:16px;box-sizing:border-box;border-right:1px solid #ddd;overflow:auto;flex:none}
+  #side{width:320px;padding:16px;box-sizing:border-box;border-right:1px solid #ddd;overflow:auto;flex:none}
   #side h3{margin:0 0 8px}
   #side label{display:block;margin-top:10px;font-size:13px}
   #side input[type=range],#side select{width:100%}
   #side button{margin-top:10px;padding:8px;width:100%;cursor:pointer}
+  .grp[hidden]{display:none}
   #main{flex:1;background:#fff;min-width:0}
   #svg{width:100%;height:100%;display:block}
   .muted{color:#666;font-size:12px;line-height:1.45}
@@ -23,6 +24,7 @@
 
   <label>Output
     <select id="mode">
+      <option value="vector">Line art (vector trace)</option>
       <option value="both">Curves + shading</option>
       <option value="curves">Curves only</option>
       <option value="hatch">Shading only</option>
@@ -30,27 +32,42 @@
   </label>
 
   <label>Resolution <span id="resV"></span>
-    <input type="range" id="res" min="200" max="800" step="20" value="560"></label>
-  <label>Contrast <span id="gammaV"></span>
-    <input type="range" id="gamma" min="0.4" max="2.2" step="0.05" value="1"></label>
-  <label>Smoothing <span id="smoothV"></span>
-    <input type="range" id="smooth" min="1" max="8" step="1" value="4"></label>
-  <label>Line spacing <span id="spacingV"></span>
-    <input type="range" id="spacing" min="1.2" max="4" step="0.1" value="2.2"></label>
-  <label>Darkness floor <span id="thrV"></span>
-    <input type="range" id="thr" min="0.02" max="0.40" step="0.01" value="0.12"></label>
-  <label>Curve detail <span id="detailV"></span>
-    <input type="range" id="detail" min="1" max="9" step="1" value="5"></label>
+    <input type="range" id="res" min="200" max="800" step="20" value="700"></label>
+
+  <div class="grp" data-grp="vector">
+    <label>Colours <span id="colorsV"></span>
+      <input type="range" id="colors" min="3" max="16" step="1" value="6"></label>
+    <label>Cleanup <span id="simplifyV"></span>
+      <input type="range" id="simplify" min="0" max="80" step="2" value="40"></label>
+    <label>Denoise <span id="blurV"></span>
+      <input type="range" id="blur" min="0" max="3" step="1" value="2"></label>
+    <label>Line width <span id="lwV"></span>
+      <input type="range" id="lw" min="0.4" max="2.4" step="0.1" value="0.9"></label>
+  </div>
+
+  <div class="grp" data-grp="sketch" hidden>
+    <label>Contrast <span id="gammaV"></span>
+      <input type="range" id="gamma" min="0.4" max="2.2" step="0.05" value="1"></label>
+    <label>Smoothing <span id="smoothV"></span>
+      <input type="range" id="smooth" min="1" max="8" step="1" value="4"></label>
+    <label>Line spacing <span id="spacingV"></span>
+      <input type="range" id="spacing" min="1.2" max="4" step="0.1" value="2.2"></label>
+    <label>Darkness floor <span id="thrV"></span>
+      <input type="range" id="thr" min="0.02" max="0.40" step="0.01" value="0.12"></label>
+    <label>Curve detail <span id="detailV"></span>
+      <input type="range" id="detail" min="1" max="9" step="1" value="5"></label>
+  </div>
 
   <button id="draw">Draw image</button>
   <button id="clear">Clear</button>
   <button id="save">Save as SVG</button>
 
   <p id="info" class="muted"></p>
-  <p class="muted">Curves are traced from image edges and drawn as smooth Bezier strokes. Shading is parallel hatching whose density carries tone. Raise <b>Smoothing</b> when busy areas turn muddy.</p>
+  <p class="muted"><b>Line art</b> traces flat colour regions into smooth curves — best for graphics, game screenshots and logos. <b>Curves + shading</b> suits photographs. Raise <b>Cleanup</b> if texture noise appears.</p>
 </div>
 <div id="main"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
 
+<script src="imagetracer.js"></script>
 <script src="contour.js"></script>
 <script src="sketch.js"></script>
 <script src="lineart.js"></script>
@@ -58,10 +75,21 @@
 const $ = id => document.getElementById(id);
 let img = null, lastArt = null;
 
-['res','gamma','smooth','spacing','thr','detail'].forEach(id => {
-  const show = () => $(id + 'V').textContent = $(id).value;
+const SHOWN = ['res','colors','simplify','blur','lw','gamma','smooth','spacing','thr','detail'];
+SHOWN.forEach(id => {
+  const show = () => { const v = $(id + 'V'); if (v) v.textContent = $(id).value; };
   $(id).addEventListener('input', show); show();
 });
+
+function syncGroups() {
+  const mode = $('mode').value;
+  document.querySelectorAll('.grp').forEach(g => {
+    const v = g.dataset.grp;
+    g.hidden = mode === 'vector' ? v !== 'vector' : v !== 'sketch';
+  });
+}
+$('mode').addEventListener('change', syncGroups);
+syncGroups();
 
 $('file').addEventListener('change', e => {
   const f = e.target.files[0];
@@ -74,8 +102,8 @@ $('file').addEventListener('change', e => {
   im.src = URL.createObjectURL(f);
 });
 
-// Image -> darkness grid (0 = white, 1 = black).
-function buildGrid() {
+// Image -> canvas at limited resolution.
+function drawToCanvas() {
   const R = +$('res').value;
   const s = Math.min(1, R / Math.max(img.width, img.height));
   const w = Math.max(8, Math.round(img.width * s));
@@ -84,6 +112,10 @@ function buildGrid() {
   c.width = w; c.height = h;
   const ctx = c.getContext('2d');
   ctx.drawImage(img, 0, 0, w, h);
+  return { canvas: c, ctx, w, h };
+}
+
+function gridFrom(ctx, w, h) {
   const px = ctx.getImageData(0, 0, w, h).data;
   const gam = +$('gamma').value;
   const v = new Float32Array(w * h);
@@ -94,21 +126,40 @@ function buildGrid() {
   return { w, h, v };
 }
 
-function render(art) {
+function viewport(gw, gh) {
   const svg = $('svg');
   const W = Math.round(svg.clientWidth || window.innerWidth * 0.66);
   const H = Math.round(svg.clientHeight || window.innerHeight);
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-
   const pad = 16;
-  const gw = art.gridW, gh = art.gridH;
   const sc = Math.min((W - 2*pad) / gw, (H - 2*pad) / gh);
   const ox = (W - gw*sc) / 2, oy = (H - gh*sc) / 2;
-  const X = x => ox + x*sc, Y = y => oy + y*sc;
+  return { W, H, sc, ox, oy };
+}
 
+// ---- vector trace: real Bezier outlines ----
+function renderVector(tracerSvg, gw, gh) {
+  const { W, H, sc, ox, oy } = viewport(gw, gh);
+  const doc = new DOMParser().parseFromString(tracerSvg, 'image/svg+xml');
+  const paths = Array.from(doc.querySelectorAll('path'));
+  const lw = (+$('lw').value / sc).toFixed(3);
+  let html = `<rect width="${W}" height="${H}" fill="#fff"/><g transform="translate(${ox.toFixed(2)},${oy.toFixed(2)}) scale(${sc.toFixed(4)})">`;
+  for (const p of paths) {
+    const d = p.getAttribute('d');
+    if (!d) continue;
+    html += `<path d="${d}" fill="none" stroke="#000" stroke-width="${lw}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  }
+  html += '</g>';
+  $('svg').innerHTML = html;
+  return paths.length;
+}
+
+// ---- tone renderers (hatching + traced edge curves) ----
+function renderTone(art) {
+  const { W, H, sc, ox, oy } = viewport(art.gridW, art.gridH);
+  const X = x => ox + x*sc, Y = y => oy + y*sc;
   let html = `<rect width="${W}" height="${H}" fill="#fff"/>`;
 
-  // shading: hatch segments, bucketed by weight
   if (art.hatch && art.hatch.strokes.length) {
     const buckets = new Map();
     for (const st of art.hatch.strokes) {
@@ -125,7 +176,6 @@ function render(art) {
     }
   }
 
-  // curves: quadratic Bezier strokes traced from edges
   if (art.curves && art.curves.lines.length) {
     let d = '';
     for (const pts of art.curves.lines) {
@@ -141,7 +191,7 @@ function render(art) {
     html += `<path d="${d}" fill="none" stroke="#000" stroke-width="1.05" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
 
-  svg.innerHTML = html;
+  $('svg').innerHTML = html;
 }
 
 $('draw').addEventListener('click', () => {
@@ -149,10 +199,32 @@ $('draw').addEventListener('click', () => {
   $('info').textContent = 'Drawing...';
   setTimeout(() => {
     try {
-      const grid = buildGrid();
       const mode = $('mode').value;
+      const { ctx, w, h } = drawToCanvas();
       const t0 = performance.now();
 
+      if (mode === 'vector') {
+        if (typeof ImageTracer === 'undefined') throw new Error('tracer failed to load');
+        const opts = {
+          numberofcolors: +$('colors').value,
+          ltres: 2, qtres: 2,
+          pathomit: +$('simplify').value,
+          rightangleenhance: true,
+          blurradius: +$('blur').value,
+          strokewidth: 0,
+          linefilter: false,
+          scale: 1, roundcoords: 2, viewbox: true, desc: false
+        };
+        const imgd = ctx.getImageData(0, 0, w, h);
+        const svgStr = ImageTracer.imagedataToSVG(imgd, opts);
+        const n = renderVector(svgStr, w, h);
+        const ms = Math.round(performance.now() - t0);
+        lastArt = { vector: svgStr, gridW: w, gridH: h };
+        $('info').textContent = `${n} curves, ${+$('colors').value} colours, ${ms}ms.`;
+        return;
+      }
+
+      const grid = gridFrom(ctx, w, h);
       let hatch = null, curves = null;
       if (mode !== 'curves') {
         hatch = buildLineArt(grid, {
@@ -163,19 +235,13 @@ $('draw').addEventListener('click', () => {
         });
       }
       if (mode !== 'hatch') {
-        // detail slider 1..9 -> gate 0.02..0.18 (higher = fewer, stronger edges)
         const gate = 0.02 + (+$('detail').value - 1) * 0.02;
-        curves = buildSketch(grid, {
-          sigmas: [1.2, 3.0],
-          gate,
-          eps: 0.6,
-          smoothIters: 2
-        });
+        curves = buildSketch(grid, { sigmas: [1.2, 3.0], gate, eps: 0.6, smoothIters: 2 });
       }
 
       const ms = Math.round(performance.now() - t0);
       lastArt = { hatch, curves, gridW: grid.w, gridH: grid.h };
-      render(lastArt);
+      renderTone(lastArt);
 
       const parts = [];
       if (hatch) parts.push(`${hatch.strokes.length} hatch strokes`);
@@ -213,7 +279,11 @@ $('save').addEventListener('click', () => {
 let rt;
 window.addEventListener('resize', () => {
   clearTimeout(rt);
-  rt = setTimeout(() => { if (lastArt) render(lastArt); }, 150);
+  rt = setTimeout(() => {
+    if (!lastArt) return;
+    if (lastArt.vector) renderVector(lastArt.vector, lastArt.gridW, lastArt.gridH);
+    else renderTone(lastArt);
+  }, 150);
 });
 </script>
 </body>
