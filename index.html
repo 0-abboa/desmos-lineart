@@ -9,9 +9,9 @@
   #side{width:310px;padding:16px;box-sizing:border-box;border-right:1px solid #ddd;overflow:auto;flex:none}
   #side h3{margin:0 0 8px}
   #side label{display:block;margin-top:10px;font-size:13px}
-  #side input[type=range]{width:100%}
+  #side input[type=range],#side select{width:100%}
   #side button{margin-top:10px;padding:8px;width:100%;cursor:pointer}
-  #main{flex:1;position:relative;background:#fff;min-width:0;display:flex;align-items:center;justify-content:center}
+  #main{flex:1;background:#fff;min-width:0}
   #svg{width:100%;height:100%;display:block}
   .muted{color:#666;font-size:12px;line-height:1.45}
 </style>
@@ -21,40 +21,44 @@
   <h3>Image to line art</h3>
   <input type="file" id="file" accept="image/*">
 
+  <label>Output
+    <select id="mode">
+      <option value="both">Curves + shading</option>
+      <option value="curves">Curves only</option>
+      <option value="hatch">Shading only</option>
+    </select>
+  </label>
+
   <label>Resolution <span id="resV"></span>
-    <input type="range" id="res" min="160" max="700" step="20" value="480"></label>
+    <input type="range" id="res" min="200" max="800" step="20" value="560"></label>
   <label>Contrast <span id="gammaV"></span>
     <input type="range" id="gamma" min="0.4" max="2.2" step="0.05" value="1"></label>
   <label>Smoothing <span id="smoothV"></span>
-    <input type="range" id="smooth" min="1" max="8" step="1" value="5"></label>
+    <input type="range" id="smooth" min="1" max="8" step="1" value="4"></label>
   <label>Line spacing <span id="spacingV"></span>
-    <input type="range" id="spacing" min="1.4" max="4" step="0.1" value="2.2"></label>
+    <input type="range" id="spacing" min="1.2" max="4" step="0.1" value="1.6"></label>
   <label>Darkness floor <span id="thrV"></span>
-    <input type="range" id="thr" min="0.02" max="0.40" step="0.01" value="0.14"></label>
-  <label style="margin-top:12px">Output
-    <select id="mode" style="width:100%;margin-top:4px;padding:4px">
-      <option value="both">Hatching + edges</option>
-      <option value="hatch">Hatching only</option>
-      <option value="edges">Edges only</option>
-    </select>
-  </label>
+    <input type="range" id="thr" min="0.02" max="0.40" step="0.01" value="0.08"></label>
+  <label>Curve detail <span id="detailV"></span>
+    <input type="range" id="detail" min="1" max="9" step="1" value="5"></label>
 
   <button id="draw">Draw image</button>
   <button id="clear">Clear</button>
   <button id="save">Save as SVG</button>
 
   <p id="info" class="muted"></p>
-  <p class="muted">Engraving-style hatching: parallel strokes whose density carries the tone. Smoothing trades detail for cleaner lines - raise it if busy areas turn muddy.</p>
+  <p class="muted">Curves are traced from image edges and drawn as smooth Bezier strokes. Shading is parallel hatching whose density carries tone. Raise <b>Smoothing</b> when busy areas turn muddy.</p>
 </div>
 <div id="main"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
 
+<script src="contour.js"></script>
+<script src="sketch.js"></script>
 <script src="lineart.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-const WORLD_W = 100;             // drawing width in graph units
-let img = null, lastArt = null, lastH = 100;
+let img = null, lastArt = null;
 
-['res','gamma','smooth','spacing','thr'].forEach(id => {
+['res','gamma','smooth','spacing','thr','detail'].forEach(id => {
   const show = () => $(id + 'V').textContent = $(id).value;
   $(id).addEventListener('input', show); show();
 });
@@ -87,38 +91,56 @@ function buildGrid() {
     const L = (0.299 * px[4*i] + 0.587 * px[4*i+1] + 0.114 * px[4*i+2]) / 255;
     v[i] = Math.pow(1 - L, gam);
   }
-  return { w, h, v, H: WORLD_W * h / w };
+  return { w, h, v };
 }
 
-// Draw strokes as a few paths, bucketed by width so line weight can vary.
-function renderSVG(art, H) {
+function render(art) {
   const svg = $('svg');
   const W = Math.round(svg.clientWidth || window.innerWidth * 0.66);
-  const HH = Math.round(svg.clientHeight || window.innerHeight);
-  svg.setAttribute('viewBox', `0 0 ${W} ${HH}`);
+  const H = Math.round(svg.clientHeight || window.innerHeight);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
   const pad = 16;
   const gw = art.gridW, gh = art.gridH;
-  const sc = Math.min((W - 2*pad) / gw, (HH - 2*pad) / gh);
-  const ox = (W - gw*sc) / 2, oy = (HH - gh*sc) / 2;
-  const px = x => ox + x*sc, py = y => oy + y*sc;
+  const sc = Math.min((W - 2*pad) / gw, (H - 2*pad) / gh);
+  const ox = (W - gw*sc) / 2, oy = (H - gh*sc) / 2;
+  const X = x => ox + x*sc, Y = y => oy + y*sc;
 
-  const buckets = new Map();
-  for (const st of art.strokes) {
-    const key = Math.round(st.width * 8) / 8;      // quantise weight
-    let d = buckets.get(key);
-    if (d === undefined) { d = ''; buckets.set(key, d); }
-    d += `M${px(st.xs[0]).toFixed(1)} ${py(st.ys[0]).toFixed(1)}`;
-    for (let i = 1; i < st.xs.length; i++) {
-      d += `L${px(st.xs[i]).toFixed(1)} ${py(st.ys[i]).toFixed(1)}`;
+  let html = `<rect width="${W}" height="${H}" fill="#fff"/>`;
+
+  // shading: hatch segments, bucketed by weight
+  if (art.hatch && art.hatch.strokes.length) {
+    const buckets = new Map();
+    for (const st of art.hatch.strokes) {
+      const key = Math.round(st.width * 4) / 4;
+      let d = buckets.get(key) || '';
+      d += `M${X(st.xs[0]).toFixed(1)} ${Y(st.ys[0]).toFixed(1)}`;
+      for (let i = 1; i < st.xs.length; i++) {
+        d += `L${X(st.xs[i]).toFixed(1)} ${Y(st.ys[i]).toFixed(1)}`;
+      }
+      buckets.set(key, d);
     }
-    buckets.set(key, d);
+    for (const [wgt, d] of buckets) {
+      html += `<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.min(0.75, wgt).toFixed(2)}" stroke-linecap="round"/>`;
+    }
   }
 
-  let html = `<rect width="${W}" height="${HH}" fill="#fff"/>`;
-  for (const [wgt, d] of buckets) {
-    html += `<path d="${d}" fill="none" stroke="#000" stroke-width="${wgt.toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  // curves: quadratic Bezier strokes traced from edges
+  if (art.curves && art.curves.lines.length) {
+    let d = '';
+    for (const pts of art.curves.lines) {
+      d += `M${X(pts[0][0]).toFixed(1)} ${Y(pts[0][1]).toFixed(1)}`;
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i][0] + pts[i+1][0]) / 2;
+        const my = (pts[i][1] + pts[i+1][1]) / 2;
+        d += `Q${X(pts[i][0]).toFixed(1)} ${Y(pts[i][1]).toFixed(1)} ${X(mx).toFixed(1)} ${Y(my).toFixed(1)}`;
+      }
+      const last = pts[pts.length-1];
+      d += `L${X(last[0]).toFixed(1)} ${Y(last[1]).toFixed(1)}`;
+    }
+    html += `<path d="${d}" fill="none" stroke="#000" stroke-width="1.05" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
+
   svg.innerHTML = html;
 }
 
@@ -128,22 +150,38 @@ $('draw').addEventListener('click', () => {
   setTimeout(() => {
     try {
       const grid = buildGrid();
-      const t0 = performance.now();
       const mode = $('mode').value;
-      const opts = {
-        preBlur: +$('smooth').value,
-        spacing: +$('spacing').value,
-        thr: +$('thr').value,
-        edgePass: mode !== 'hatch'
-      };
-      if (mode === 'edges') opts.angles = [];   // no hatch layers at all
-      const art = buildLineArt(grid, opts);
+      const t0 = performance.now();
+
+      let hatch = null, curves = null;
+      if (mode !== 'curves') {
+        hatch = buildLineArt(grid, {
+          preBlur: +$('smooth').value,
+          spacing: +$('spacing').value,
+          thr: +$('thr').value,
+          edgePass: false
+        });
+      }
+      if (mode !== 'hatch') {
+        // detail slider 1..9 -> gate 0.02..0.18 (higher = fewer, stronger edges)
+        const gate = 0.02 + (+$('detail').value - 1) * 0.02;
+        curves = buildSketch(grid, {
+          sigmas: [1.2, 3.0],
+          gate,
+          eps: 0.6,
+          smoothIters: 2
+        });
+      }
+
       const ms = Math.round(performance.now() - t0);
-      lastArt = art; lastH = grid.H;
-      renderSVG(art, grid.H);
-      let pts = 0;
-      for (const st of art.strokes) pts += st.xs.length;
-      $('info').textContent = `${art.strokes.length} strokes, ${pts} points, ${ms}ms.`;
+      lastArt = { hatch, curves, gridW: grid.w, gridH: grid.h };
+      render(lastArt);
+
+      const parts = [];
+      if (hatch) parts.push(`${hatch.strokes.length} hatch strokes`);
+      if (curves) parts.push(`${curves.count} curves (${curves.points} pts)`);
+      parts.push(`${ms}ms`);
+      $('info').textContent = parts.join(', ') + '.';
     } catch (err) {
       $('info').textContent = 'Error: ' + err.message;
       throw err;
@@ -175,7 +213,7 @@ $('save').addEventListener('click', () => {
 let rt;
 window.addEventListener('resize', () => {
   clearTimeout(rt);
-  rt = setTimeout(() => { if (lastArt) renderSVG(lastArt, lastH); }, 150);
+  rt = setTimeout(() => { if (lastArt) render(lastArt); }, 150);
 });
 </script>
 </body>
