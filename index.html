@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Image to Desmos line art</title>
 <!-- Desmos API key: placeholder. Replace *** with your own key from desmos.com/api -->
-<script src="https://www.desmos.com/api/v1.10/calculator.js?apiKey=***"></script>
+<script src="https://www.desmos.com/api/v1.10/calculator.js?apiKey=b1bf10dbe2ab4cc28575b82cfe7d15ed"></script>
 <script src="contour.js"></script>
 <style>
   body{font-family:system-ui,sans-serif;margin:0;display:flex;height:100vh}
@@ -82,7 +82,7 @@ function buildGrid() {
 
 function ensureCalc() {
   if (typeof Desmos === 'undefined') {
-    $('info').textContent = 'Desmos failed to load: replace apiKey=*** in index.html with a real key from desmos.com/api.';
+    $('info').textContent = 'Desmos failed to load: the API key is missing, invalid, or not registered for this domain.';
     return null;
   }
   if (!calc) calc = Desmos.GraphingCalculator($('calc'), {
