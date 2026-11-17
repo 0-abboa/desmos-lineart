@@ -52,6 +52,7 @@
     <input type="range" id="blur" min="0" max="3" step="1" value="2"></label>
   <label>Line width <span id="lwVecV"></span>
     <input type="range" id="lwVec" min="0.4" max="2.4" step="0.1" value="0.9"></label>
+  <label><input type="checkbox" id="bgClean" checked /> Clean background</label>
 
   <button id="draw">Draw image</button>
   <button id="clear">Clear</button>
@@ -61,6 +62,7 @@
     <p class="muted" id="desmosInfo"></p>
     <textarea id="desmosOut" rows="6" style="width:100%;font-size:11px;font-family:ui-monospace,monospace"></textarea>
     <button id="copyDesmos">Copy expressions</button>
+    <button id="copyColor">Copy colour script</button>
   </div>
 
   <p id="info" class="muted"></p>
@@ -72,7 +74,7 @@
 <script src="skeleton.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-let img = null, lastArt = null;
+let img = null, lastArt = null, lastExport = null;
 
 const SHOWN = ['res','sigma','tau','cleanup','lwLine','colors','simplify','blur','lwVec'];
 SHOWN.forEach(id => {
@@ -274,6 +276,12 @@ function paletteColor(palette, i) {
   return 'rgb(80,80,80)';
 }
 
+function toHex(rgb) {
+  const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(rgb);
+  if (!m) return '#ffffff';
+  return '#' + [1, 2, 3].map(i => (+m[i]).toString(16).padStart(2, '0')).join('');
+}
+
 // Filled preview: exactly the geometry that goes to Desmos, so what you see is
 // what you paste. A hairline stroke in the same colour seals seams.
 function renderPolygons(shapes, palette, gw, gh) {
@@ -289,19 +297,80 @@ function renderPolygons(shapes, palette, gw, gh) {
   $('svg').innerHTML = html;
 }
 
-function buildDesmosExpressions(shapes, w, h) {
+function buildDesmosExpressions(shapes, palette, w, h) {
   const span = 10;
   const sc = span / Math.max(w, h);
   const X = x => (x * sc).toFixed(2);
   const Y = y => ((h - y) * sc).toFixed(2);
-  const exprs = [];
-  // Canvas base first: guarantees no white gaps between neighbouring regions.
-  exprs.push(`\\operatorname{polygon}\\left(\\left(0,0\\right),\\left(${(w*sc).toFixed(2)},0\\right),\\left(${(w*sc).toFixed(2)},${(h*sc).toFixed(2)}\\right),\\left(0,${(h*sc).toFixed(2)}\\right)\\right)`);
+  const call = pts => `\\operatorname{polygon}\\left(${pts.map(([x, y]) => `\\left(${X(x)},${Y(y)}\\right)`).join(',')}\\right)`;
+
+  // One expression per colour layer. Desmos fills comma-separated polygon calls
+  // inside a single expression, and an expression carries exactly one colour,
+  // so this turns one colour pick per shape into one per layer.
+  const byLayer = new Map();
   for (const s of shapes) {
-    const body = s.pts.map(([x, y]) => `\\left(${X(x)},${Y(y)}\\right)`).join(',');
-    exprs.push(`\\operatorname{polygon}\\left(${body}\\right)`);
+    if (!byLayer.has(s.layer)) byLayer.set(s.layer, []);
+    byLayer.get(s.layer).push(call(s.pts));
   }
-  return exprs;
+
+  // The base canvas is kept in its own first expression: no backdrop can show
+  // through, and draw order inside a single expression is not guaranteed.
+  const exprs = [`\\operatorname{polygon}\\left(\\left(0,0\\right),\\left(${(w*sc).toFixed(2)},0\\right),\\left(${(w*sc).toFixed(2)},${(h*sc).toFixed(2)}\\right),\\left(0,${(h*sc).toFixed(2)}\\right)\\right)`];
+  const legend = [{ label: 'base canvas', n: 1, color: 'rgb(255,255,255)' }];
+  for (const li of [...byLayer.keys()].sort((a, b) => a - b)) {
+    const calls = byLayer.get(li);
+    exprs.push(calls.join(','));
+    legend.push({ label: 'layer ' + li, n: calls.length, color: paletteColor(palette, li) });
+  }
+  return { exprs, legend };
+}
+
+// A photo backdrop posterises into jagged black/white shards, which read as
+// noise rather than drawing. Flood the border-connected pixels to one flat
+// colour so the subject sits on a clean ground.
+function flattenBackground(ctx, w, h, tol) {
+  const imgd = ctx.getImageData(0, 0, w, h);
+  const d = imgd.data;
+  const at = (x, y) => (y * w + x) * 4;
+
+  const rs = [], gs = [], bs = [];
+  for (let x = 0; x < w; x++) {
+    for (const y of [0, h - 1]) {
+      const i = at(x, y);
+      if (d[i + 3] > 8) { rs.push(d[i]); gs.push(d[i + 1]); bs.push(d[i + 2]); }
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    for (const x of [0, w - 1]) {
+      const i = at(x, y);
+      if (d[i + 3] > 8) { rs.push(d[i]); gs.push(d[i + 1]); bs.push(d[i + 2]); }
+    }
+  }
+  if (!rs.length) return 0;
+  const med = a => { a.sort((p, q) => p - q); return a[a.length >> 1]; };
+  const br = med(rs), bg = med(gs), bb = med(bs);
+
+  const close = i => Math.abs(d[i] - br) + Math.abs(d[i+1] - bg) + Math.abs(d[i+2] - bb) <= tol;
+  const seen = new Uint8Array(w * h);
+  const stack = [];
+  for (let x = 0; x < w; x++) stack.push(x, 0, x, h - 1);
+  for (let y = 0; y < h; y++) stack.push(0, y, w - 1, y);
+
+  let painted = 0;
+  while (stack.length) {
+    const y = stack.pop(), x = stack.pop();
+    if (x < 0 || y < 0 || x >= w || y >= h) continue;
+    const p = y * w + x;
+    if (seen[p]) continue;
+    seen[p] = 1;
+    const i = p * 4;
+    if (!close(i)) continue;
+    d[i] = br; d[i + 1] = bg; d[i + 2] = bb; d[i + 3] = 255;
+    painted++;
+    stack.push(x - 1, y, x + 1, y, x, y - 1, x, y + 1);
+  }
+  ctx.putImageData(imgd, 0, 0);
+  return painted;
 }
 
 function runLine(ctx, w, h, kind) {
@@ -329,6 +398,7 @@ function runLine(ctx, w, h, kind) {
 
 function runVector(ctx, w, h) {
   if (typeof ImageTracer === 'undefined') throw new Error('tracer failed to load');
+  if ($('bgClean').checked) flattenBackground(ctx, w, h, 60);
   const opts = {
     numberofcolors: +$('colors').value,
     ltres: 2, qtres: 2,
@@ -409,10 +479,16 @@ $('desmos').addEventListener('click', () => {
     $('info').textContent = 'Desmos export needs filled regions. Choose Outline trace (or Auto on a photo), then Draw.';
     return;
   }
-  const exprs = buildDesmosExpressions(lastArt.shapes, lastArt.gridW, lastArt.gridH);
+  const { exprs, legend } = buildDesmosExpressions(lastArt.shapes, lastArt.palette, lastArt.gridW, lastArt.gridH);
+  lastExport = { exprs, legend };
   $('desmosOut').value = exprs.join('\n');
   $('desmosWrap').hidden = false;
-  $('desmosInfo').textContent = `${lastArt.shapes.length} polygons + 1 canvas base = ${exprs.length} expressions. Paste the whole box into Desmos.`;
+  // One expression per colour means one colour pick per layer in Desmos, so the
+  // legend names the colour each row should get.
+  $('desmosInfo').innerHTML =
+    `${exprs.length} expressions, one per colour — so ${exprs.length} colour picks total instead of ${lastArt.shapes.length}.<br>` +
+    legend.map((l, i) => `${i + 1}. ${l.label}: ${l.n} shape${l.n > 1 ? 's' : ''} ` +
+      `<span style="display:inline-block;width:10px;height:10px;background:${l.color};border:1px solid #888;vertical-align:-1px"></span> ${l.color}`).join('<br>');
   $('info').textContent = 'Desmos export ready.';
 });
 
@@ -426,6 +502,27 @@ $('copyDesmos').addEventListener('click', async () => {
   } catch (e) {
     document.execCommand('copy');
     $('info').textContent = 'Copied.';
+  }
+});
+
+// Desmos' swatch list is a fixed handful of presets, so a photo palette cannot
+// be matched by clicking. The calculator API does accept any hex, so hand over
+// one paste that sets every layer's real colour and makes the fills solid.
+$('copyColor').addEventListener('click', async () => {
+  if (!lastExport) { $('info').textContent = 'Export for Desmos first.'; return; }
+  const hexes = lastExport.legend.map(l => toHex(l.color));
+  const script =
+    `const C=${JSON.stringify(hexes)};` +
+    `Calc.getState().expressions.list.forEach((e,i)=>{if(C[i])Calc.setExpression({id:e.id,color:C[i],fillOpacity:1});});`;
+  $('desmosOut').value = script;
+  $('desmosOut').focus();
+  $('desmosOut').select();
+  try {
+    await navigator.clipboard.writeText(script);
+    $('info').textContent = 'Colour script copied — paste it into the browser console on your Desmos tab.';
+  } catch (e) {
+    document.execCommand('copy');
+    $('info').textContent = 'Colour script written to the box — copy it into the browser console on your Desmos tab.';
   }
 });
 
