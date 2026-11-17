@@ -52,11 +52,16 @@
     <input type="range" id="blur" min="0" max="3" step="1" value="2"></label>
   <label>Line width <span id="lwVecV"></span>
     <input type="range" id="lwVec" min="0.4" max="2.4" step="0.1" value="0.9"></label>
-  <label><input type="checkbox" id="fill" /> Fill shapes (solid logos)</label>
 
   <button id="draw">Draw image</button>
   <button id="clear">Clear</button>
   <button id="save">Save as SVG</button>
+  <button id="desmos">Export for Desmos</button>
+  <div id="desmosWrap" hidden>
+    <p class="muted" id="desmosInfo"></p>
+    <textarea id="desmosOut" rows="6" style="width:100%;font-size:11px;font-family:ui-monospace,monospace"></textarea>
+    <button id="copyDesmos">Copy expressions</button>
+  </div>
 
   <p id="info" class="muted"></p>
   <p class="muted"><b>Auto</b> picks an engine from the image: flat icons get a hard threshold, sketches get XDoG ink extraction, photographs get a flat-colour outline trace. Override with the Output menu.</p>
@@ -187,6 +192,118 @@ function renderVector(tracerSvg, gw, gh, filled, lw) {
   return paths.length;
 }
 
+// Flatten an imagetracer path (line + quadratic segments) into polygon points.
+function flattenPath(smp) {
+  const segs = smp.segments || [];
+  const pts = [];
+  if (!segs.length) return pts;
+  pts.push([segs[0].x1, segs[0].y1]);
+  for (const s of segs) {
+    if (s.x3 !== undefined) {
+      const { x1, y1, x2, y2, x3, y3 } = s;
+      for (let i = 1; i <= 5; i++) {
+        const t = i / 5, u = 1 - t;
+        pts.push([u*u*x1 + 2*u*t*x2 + t*t*x3, u*u*y1 + 2*u*t*y2 + t*t*y3]);
+      }
+    } else {
+      pts.push([s.x2, s.y2]);
+    }
+  }
+  return pts;
+}
+
+// Simplify a CLOSED polygon. Feeding a ring straight to RDP degenerates it:
+// first and last vertex coincide, the baseline has zero length, every point
+// measures as zero distance, and the ring collapses to two points. Split the
+// ring at its furthest vertex and simplify each half instead.
+function simplifyPolygon(pts, eps) {
+  if (pts.length < 4) return pts;
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  let ring = pts.slice();
+  if (dist(ring[0], ring[ring.length - 1]) < 0.75) ring.pop();
+  if (ring.length < 3) return pts;
+
+  let far = 1, best = -1;
+  for (let i = 1; i < ring.length; i++) {
+    const d = dist(ring[0], ring[i]);
+    if (d > best) { best = d; far = i; }
+  }
+  const a = sk2Rdp(ring.slice(0, far + 1), eps);
+  const b = sk2Rdp(ring.slice(far).concat([ring[0]]), eps);
+  const out = a.concat(b.slice(1));
+  if (out.length >= 3) return out;
+
+  // Last resort: uniform decimation, so a polygon never vanishes.
+  const step = Math.max(1, Math.ceil(ring.length / 24));
+  const dec = ring.filter((_, i) => i % step === 0);
+  return dec.length >= 3 ? dec : ring.slice(0, Math.min(ring.length, 3));
+}
+
+// Desmos takes filled polygons, not strokes, so the picture must be built from
+// closed regions. Shapes are emitted back-to-front and every one is filled,
+// which is what removes the gaps and holes the stroke export had.
+function buildPolygons(tracedata, eps, maxShapes) {
+  const shapes = [];
+  (tracedata.layers || []).forEach((layer, li) => {
+    for (const smp of layer) {
+      const pts = flattenPath(smp);
+      if (pts.length < 3) continue;
+      const simp = simplifyPolygon(pts, eps);
+      if (simp.length < 3) continue;
+      let area = 0;
+      for (let i = 0; i < simp.length; i++) {
+        const [x1, y1] = simp[i], [x2, y2] = simp[(i + 1) % simp.length];
+        area += x1 * y2 - x2 * y1;
+      }
+      shapes.push({ layer: li, pts: simp, area: Math.abs(area) / 2 });
+    }
+  });
+  shapes.sort((a, b) => a.layer - b.layer || b.area - a.area);
+  const kept = shapes.slice(0, maxShapes);
+  return { shapes: kept, total: shapes.length };
+}
+
+function paletteColor(palette, i) {
+  const c = palette && palette[i];
+  if (!c) return 'rgb(80,80,80)';
+  if (Array.isArray(c)) return `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
+  // imagetracer's palette entries are {r,g,b,a} objects, not arrays.
+  if (typeof c === 'object' && c.r !== undefined) {
+    return `rgb(${c.r | 0},${c.g | 0},${c.b | 0})`;
+  }
+  return 'rgb(80,80,80)';
+}
+
+// Filled preview: exactly the geometry that goes to Desmos, so what you see is
+// what you paste. A hairline stroke in the same colour seals seams.
+function renderPolygons(shapes, palette, gw, gh) {
+  const { W, H, sc, ox, oy } = viewport(gw, gh);
+  const X = x => (ox + x*sc).toFixed(1);
+  const Y = y => (oy + y*sc).toFixed(1);
+  let html = `<rect width="${W}" height="${H}" fill="#fff"/>`;
+  for (const s of shapes) {
+    const col = paletteColor(palette, s.layer);
+    const d = s.pts.map(([x, y], i) => `${i ? 'L' : 'M'}${X(x)} ${Y(y)}`).join('') + 'Z';
+    html += `<path d="${d}" fill="${col}" stroke="${col}" stroke-width="0.6" stroke-linejoin="round"/>`;
+  }
+  $('svg').innerHTML = html;
+}
+
+function buildDesmosExpressions(shapes, w, h) {
+  const span = 10;
+  const sc = span / Math.max(w, h);
+  const X = x => (x * sc).toFixed(2);
+  const Y = y => ((h - y) * sc).toFixed(2);
+  const exprs = [];
+  // Canvas base first: guarantees no white gaps between neighbouring regions.
+  exprs.push(`\\operatorname{polygon}\\left(\\left(0,0\\right),\\left(${(w*sc).toFixed(2)},0\\right),\\left(${(w*sc).toFixed(2)},${(h*sc).toFixed(2)}\\right),\\left(0,${(h*sc).toFixed(2)}\\right)\\right)`);
+  for (const s of shapes) {
+    const body = s.pts.map(([x, y]) => `\\left(${X(x)},${Y(y)}\\right)`).join(',');
+    exprs.push(`\\operatorname{polygon}\\left(${body}\\right)`);
+  }
+  return exprs;
+}
+
 function runLine(ctx, w, h, kind) {
   const cleanup = +$('cleanup').value;
   const bitonal = kind === 'flat';
@@ -232,11 +349,11 @@ function runVector(ctx, w, h) {
     svgStr = ImageTracer.imagedataToSVG(imgd, opts);
     nPaths = (svgStr.match(/<path /g) || []).length;
   }
-  const filled = $('fill').checked;
-  const lw = +$('lwVec').value;
-  const n = renderVector(svgStr, w, h, filled, lw);
-  lastArt = { kind: 'vector', vector: svgStr, gridW: w, gridH: h, filled, lw };
-  return `${n} paths, ${+$('colors').value} colours`;
+  const tracedata = ImageTracer.imagedataToTracedata(imgd, opts);
+  const { shapes, total } = buildPolygons(tracedata, 1.2, 320);
+  renderPolygons(shapes, tracedata.palette, w, h);
+  lastArt = { kind: 'poly', shapes, palette: tracedata.palette, gridW: w, gridH: h };
+  return `${shapes.length} filled regions (of ${total}), ${+$('colors').value} colours`;
 }
 
 $('draw').addEventListener('click', () => {
@@ -287,10 +404,35 @@ $('save').addEventListener('click', () => {
   URL.revokeObjectURL(a.href);
 });
 
+$('desmos').addEventListener('click', () => {
+  if (!lastArt || lastArt.kind !== 'poly' || !lastArt.shapes.length) {
+    $('info').textContent = 'Desmos export needs filled regions. Choose Outline trace (or Auto on a photo), then Draw.';
+    return;
+  }
+  const exprs = buildDesmosExpressions(lastArt.shapes, lastArt.gridW, lastArt.gridH);
+  $('desmosOut').value = exprs.join('\n');
+  $('desmosWrap').hidden = false;
+  $('desmosInfo').textContent = `${lastArt.shapes.length} polygons + 1 canvas base = ${exprs.length} expressions. Paste the whole box into Desmos.`;
+  $('info').textContent = 'Desmos export ready.';
+});
+
+$('copyDesmos').addEventListener('click', async () => {
+  const t = $('desmosOut');
+  t.focus();
+  t.select();
+  try {
+    await navigator.clipboard.writeText(t.value);
+    $('info').textContent = `Copied ${t.value.split('\n').length} expressions.`;
+  } catch (e) {
+    document.execCommand('copy');
+    $('info').textContent = 'Copied.';
+  }
+});
+
 function redraw() {
   if (!lastArt) return;
   if (lastArt.kind === 'line') renderLines(lastArt.lines, lastArt.gridW, lastArt.gridH, lastArt.lw);
-  else if (lastArt.kind === 'vector') renderVector(lastArt.vector, lastArt.gridW, lastArt.gridH, lastArt.filled, lastArt.lw);
+  else if (lastArt.kind === 'poly') renderPolygons(lastArt.shapes, lastArt.palette, lastArt.gridW, lastArt.gridH);
 }
 
 let rt;
