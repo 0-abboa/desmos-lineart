@@ -36,7 +36,7 @@
 
   <div class="grp" data-grp="vector">
     <label>Colours <span id="colorsV"></span>
-      <input type="range" id="colors" min="3" max="16" step="1" value="6"></label>
+      <input type="range" id="colors" min="2" max="16" step="1" value="6"></label>
     <label>Cleanup <span id="simplifyV"></span>
       <input type="range" id="simplify" min="0" max="80" step="2" value="40"></label>
     <label>Denoise <span id="blurV"></span>
@@ -227,7 +227,9 @@ $('draw').addEventListener('click', () => {
           ['colors', 'simplify', 'blur'].forEach(id => { $(id + 'V').textContent = $(id).value; });
         }
         const opts = {
-          numberofcolors: +$('colors').value,
+          // Force 2 for flat art: a third entry lands on the anti-aliasing halo
+          // and explodes one shape into hundreds of scraps.
+          numberofcolors: bitonal ? 2 : +$('colors').value,
           ltres: bitonal ? 1 : 2, qtres: bitonal ? 1 : 2,
           pathomit: +$('simplify').value,
           rightangleenhance: !bitonal,
@@ -241,7 +243,7 @@ $('draw').addEventListener('click', () => {
         const n = renderVector(svgStr, w, h);
         const ms = Math.round(performance.now() - t0);
         lastArt = { vector: svgStr, gridW: w, gridH: h };
-        $('info').textContent = `${n} curves, ${+$('colors').value} colours, ${ms}ms${bitonal ? ' (flat art detected)' : ''}.`;
+        $('info').textContent = `${n} curves, ${bitonal ? 2 : +$('colors').value} colours, ${ms}ms${bitonal ? ' (flat art detected)' : ''}.`;
         return;
       }
 
