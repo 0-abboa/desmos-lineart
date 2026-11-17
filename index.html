@@ -63,7 +63,7 @@
   <button id="save">Save as SVG</button>
 
   <p id="info" class="muted"></p>
-  <p class="muted"><b>Line art</b> traces flat colour regions into smooth curves — best for graphics, game screenshots and logos. <b>Curves + shading</b> suits photographs. Raise <b>Cleanup</b> if texture noise appears.</p>
+  <p class="muted"><b>Line art</b> traces flat colour regions into smooth curves — best for graphics, game screenshots and logos. Two-tone icons and logos are detected automatically and traced at 2 colours. <b>Curves + shading</b> suits photographs. Raise <b>Cleanup</b> if texture noise appears.</p>
 </div>
 <div id="main"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
 
@@ -124,6 +124,20 @@ function gridFrom(ctx, w, h) {
     v[i] = Math.pow(1 - L, gam);
   }
   return { w, h, v };
+}
+
+// Flat two-tone art (icons, logos, existing line art) must not be traced as if
+// it were a photograph: extra palette entries land on anti-aliasing and JPEG
+// noise, shattering one clean shape into hundreds of jagged scraps.
+function isBitonal(ctx, w, h) {
+  const px = ctx.getImageData(0, 0, w, h).data;
+  const n = w * h;
+  let flat = 0;
+  for (let i = 0; i < n; i++) {
+    const L = (0.299 * px[4*i] + 0.587 * px[4*i+1] + 0.114 * px[4*i+2]) / 255;
+    if (L < 0.2 || L > 0.8) flat++;
+  }
+  return flat / n > 0.85;
 }
 
 function viewport(gw, gh) {
@@ -205,11 +219,18 @@ $('draw').addEventListener('click', () => {
 
       if (mode === 'vector') {
         if (typeof ImageTracer === 'undefined') throw new Error('tracer failed to load');
+        const bitonal = isBitonal(ctx, w, h);
+        if (bitonal) {
+          $('colors').value = 2;
+          $('simplify').value = 0;
+          $('blur').value = 0;
+          ['colors', 'simplify', 'blur'].forEach(id => { $(id + 'V').textContent = $(id).value; });
+        }
         const opts = {
           numberofcolors: +$('colors').value,
-          ltres: 2, qtres: 2,
+          ltres: bitonal ? 1 : 2, qtres: bitonal ? 1 : 2,
           pathomit: +$('simplify').value,
-          rightangleenhance: true,
+          rightangleenhance: !bitonal,
           blurradius: +$('blur').value,
           strokewidth: 0,
           linefilter: false,
@@ -220,7 +241,7 @@ $('draw').addEventListener('click', () => {
         const n = renderVector(svgStr, w, h);
         const ms = Math.round(performance.now() - t0);
         lastArt = { vector: svgStr, gridW: w, gridH: h };
-        $('info').textContent = `${n} curves, ${+$('colors').value} colours, ${ms}ms.`;
+        $('info').textContent = `${n} curves, ${+$('colors').value} colours, ${ms}ms${bitonal ? ' (flat art detected)' : ''}.`;
         return;
       }
 
