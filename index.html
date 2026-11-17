@@ -47,9 +47,9 @@
 
   <div class="grp" data-grp="vector">
     <label>Colours <span id="colorsV"></span>
-      <input type="range" id="colors" min="2" max="16" step="1" value="6"></label>
+      <input type="range" id="colors" min="2" max="16" step="1" value="4"></label>
     <label>Cleanup <span id="simplifyV"></span>
-      <input type="range" id="simplify" min="0" max="80" step="2" value="40"></label>
+      <input type="range" id="simplify" min="0" max="80" step="2" value="60"></label>
     <label>Denoise <span id="blurV"></span>
       <input type="range" id="blur" min="0" max="3" step="1" value="2"></label>
     <label>Line width <span id="lwVecV"></span>
@@ -81,6 +81,7 @@
 
 <script src="imagetracer.js"></script>
 <script src="skeleton.js"></script>
+<script src="contour.js"></script>
 <script src="sketch.js"></script>
 <script src="lineart.js"></script>
 <script>
@@ -277,7 +278,15 @@ $('draw').addEventListener('click', () => {
           scale: 1, roundcoords: 2, viewbox: true, desc: false
         };
         const imgd = ctx.getImageData(0, 0, w, h);
-        const svgStr = ImageTracer.imagedataToSVG(imgd, opts);
+        let svgStr = ImageTracer.imagedataToSVG(imgd, opts);
+        // A photographic or sketchy source can shatter into thousands of scraps.
+        // Raise the path-size floor until the count is drawable.
+        let nPaths = (svgStr.match(/<path /g) || []).length;
+        for (let tries = 0; nPaths > 900 && tries < 3; tries++) {
+          opts.pathomit = Math.min(80, opts.pathomit + 25);
+          svgStr = ImageTracer.imagedataToSVG(imgd, opts);
+          nPaths = (svgStr.match(/<path /g) || []).length;
+        }
         const filled = $('fill').checked;
         const lw = +$('lwVec').value;
         const n = renderVector(svgStr, w, h, filled, lw);
@@ -287,8 +296,10 @@ $('draw').addEventListener('click', () => {
       }
 
       const grid = gridFrom(ctx, w, h);
+      const wantHatch = mode === 'hatch' || mode === 'both';
+      const wantCurves = mode === 'both';
       let hatch = null, curves = null;
-      if (mode !== 'hatch') {
+      if (wantHatch) {
         hatch = buildLineArt(grid, {
           preBlur: +$('smooth').value,
           spacing: +$('spacing').value,
@@ -296,7 +307,7 @@ $('draw').addEventListener('click', () => {
           edgePass: false
         });
       }
-      if (mode === 'both') {
+      if (wantCurves) {
         const gate = 0.02 + (+$('detail').value - 1) * 0.02;
         curves = buildSketch(grid, { sigmas: [1.2, 3.0], gate, eps: 0.6, smoothIters: 2 });
       }
