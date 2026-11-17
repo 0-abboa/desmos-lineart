@@ -223,14 +223,14 @@ $('draw').addEventListener('click', () => {
         if (bitonal) {
           $('colors').value = 2;
           $('simplify').value = 0;
-          $('blur').value = 0;
+          $('blur').value = 1;
           ['colors', 'simplify', 'blur'].forEach(id => { $(id + 'V').textContent = $(id).value; });
         }
         const opts = {
           // Force 2 for flat art: a third entry lands on the anti-aliasing halo
           // and explodes one shape into hundreds of scraps.
           numberofcolors: bitonal ? 2 : +$('colors').value,
-          ltres: bitonal ? 1 : 2, qtres: bitonal ? 1 : 2,
+          ltres: bitonal ? 3 : 2, qtres: bitonal ? 3 : 2,
           pathomit: +$('simplify').value,
           rightangleenhance: !bitonal,
           blurradius: +$('blur').value,
