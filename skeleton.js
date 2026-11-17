@@ -310,12 +310,16 @@ function xdogMask(v, w, h, o) {
   const sigma = o.sigma === undefined ? 1.2 : o.sigma;
   const k = o.k === undefined ? 1.6 : o.k;
   const p = o.p === undefined ? 0.98 : o.p;
-  const tau = o.tau === undefined ? 0.5 : o.tau;
+  const tau = o.tau === undefined ? 0.45 : o.tau;
   const b1 = sk2Gauss(v, w, h, sigma);
   const b2 = sk2Gauss(v, w, h, sigma * k);
   const mask = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) {
-    const d = (1 + p) * b1[i] - p * b2[i];
+    // Absolute form by default: it keeps faint pencil strokes alive on paper.
+    // Band-pass (b1-b2) is available for photos but is too sparse on sketches.
+    const d = o.bandpass === true
+      ? b1[i] - b2[i]
+      : (1 + p) * b1[i] - p * b2[i];
     mask[i] = d >= tau ? 1 : 0;
   }
   return mask;

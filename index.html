@@ -6,12 +6,12 @@
 <title>Image to line art</title>
 <style>
   body{font-family:system-ui,sans-serif;margin:0;display:flex;height:100vh}
-  #side{width:320px;padding:16px;box-sizing:border-box;border-right:1px solid #ddd;overflow:auto;flex:none}
+  #side{width:330px;padding:16px;box-sizing:border-box;border-right:1px solid #ddd;overflow:auto;flex:none}
   #side h3{margin:0 0 8px}
+  #side h4{margin:16px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#888}
   #side label{display:block;margin-top:10px;font-size:13px}
   #side input[type=range],#side select{width:100%}
   #side button{margin-top:10px;padding:8px;width:100%;cursor:pointer}
-  .grp[hidden]{display:none}
   #main{flex:1;background:#fff;min-width:0}
   #svg{width:100%;height:100%;display:block}
   .muted{color:#666;font-size:12px;line-height:1.45}
@@ -24,83 +24,56 @@
 
   <label>Output
     <select id="mode">
-      <option value="line">Single-line art (sketches, icons)</option>
-      <option value="vector">Outline trace (filled shapes)</option>
-      <option value="both">Curves + shading (photos)</option>
-      <option value="hatch">Shading only</option>
+      <option value="auto">Auto (recommended)</option>
+      <option value="line">Single-line art</option>
+      <option value="vector">Outline trace</option>
     </select>
   </label>
 
   <label>Resolution <span id="resV"></span>
-    <input type="range" id="res" min="200" max="800" step="20" value="700"></label>
+    <input type="range" id="res" min="300" max="900" step="20" value="700"></label>
 
-  <div class="grp" data-grp="line">
-    <label>Softness (sigma) <span id="sigmaV"></span>
-      <input type="range" id="sigma" min="0.8" max="3.0" step="0.1" value="1.8"></label>
-    <label>Line threshold (tau) <span id="tauV"></span>
-      <input type="range" id="tau" min="0.30" max="0.70" step="0.01" value="0.45"></label>
-    <label>Cleanup <span id="cleanupV"></span>
-      <input type="range" id="cleanup" min="0" max="40" step="1" value="8"></label>
-    <label>Line width <span id="lwLineV"></span>
-      <input type="range" id="lwLine" min="0.4" max="2.4" step="0.1" value="1.4"></label>
-  </div>
+  <h4>Single-line</h4>
+  <label>Softness (sigma) <span id="sigmaV"></span>
+    <input type="range" id="sigma" min="0.8" max="3.0" step="0.1" value="1.8"></label>
+  <label>Ink threshold <span id="tauV"></span>
+    <input type="range" id="tau" min="0.30" max="0.70" step="0.01" value="0.45"></label>
+  <label>Cleanup <span id="cleanupV"></span>
+    <input type="range" id="cleanup" min="0" max="40" step="1" value="8"></label>
+  <label>Line width <span id="lwLineV"></span>
+    <input type="range" id="lwLine" min="0.4" max="2.4" step="0.1" value="1.4"></label>
 
-  <div class="grp" data-grp="vector">
-    <label>Colours <span id="colorsV"></span>
-      <input type="range" id="colors" min="2" max="16" step="1" value="4"></label>
-    <label>Cleanup <span id="simplifyV"></span>
-      <input type="range" id="simplify" min="0" max="80" step="2" value="60"></label>
-    <label>Denoise <span id="blurV"></span>
-      <input type="range" id="blur" min="0" max="3" step="1" value="2"></label>
-    <label>Line width <span id="lwVecV"></span>
-      <input type="range" id="lwVec" min="0.4" max="2.4" step="0.1" value="0.9"></label>
-    <label><input type="checkbox" id="fill" /> Fill shapes (solid logos)</label>
-  </div>
-
-  <div class="grp" data-grp="sketch" hidden>
-    <label>Contrast <span id="gammaV"></span>
-      <input type="range" id="gamma" min="0.4" max="2.2" step="0.05" value="1"></label>
-    <label>Smoothing <span id="smoothV"></span>
-      <input type="range" id="smooth" min="1" max="8" step="1" value="4"></label>
-    <label>Line spacing <span id="spacingV"></span>
-      <input type="range" id="spacing" min="1.2" max="4" step="0.1" value="2.2"></label>
-    <label>Darkness floor <span id="thrV"></span>
-      <input type="range" id="thr" min="0.02" max="0.40" step="0.01" value="0.12"></label>
-    <label>Curve detail <span id="detailV"></span>
-      <input type="range" id="detail" min="1" max="9" step="1" value="5"></label>
-  </div>
+  <h4>Outline trace</h4>
+  <label>Colours <span id="colorsV"></span>
+    <input type="range" id="colors" min="2" max="16" step="1" value="4"></label>
+  <label>Cleanup <span id="simplifyV"></span>
+    <input type="range" id="simplify" min="0" max="80" step="2" value="60"></label>
+  <label>Denoise <span id="blurV"></span>
+    <input type="range" id="blur" min="0" max="3" step="1" value="2"></label>
+  <label>Line width <span id="lwVecV"></span>
+    <input type="range" id="lwVec" min="0.4" max="2.4" step="0.1" value="0.9"></label>
+  <label><input type="checkbox" id="fill" /> Fill shapes (solid logos)</label>
 
   <button id="draw">Draw image</button>
   <button id="clear">Clear</button>
   <button id="save">Save as SVG</button>
 
   <p id="info" class="muted"></p>
-  <p class="muted"><b>Single-line art</b> thins the ink to one centre line per stroke, then draws smooth curves — the right choice for sketches, icons and logos. <b>Outline trace</b> traces filled regions. <b>Curves + shading</b> suits photographs.</p>
+  <p class="muted"><b>Auto</b> picks an engine from the image: flat icons get a hard threshold, sketches get XDoG ink extraction, photographs get a flat-colour outline trace. Override with the Output menu.</p>
 </div>
 <div id="main"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
 
 <script src="imagetracer.js"></script>
 <script src="skeleton.js"></script>
-<script src="contour.js"></script>
-<script src="sketch.js"></script>
-<script src="lineart.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let img = null, lastArt = null;
 
-const SHOWN = ['res','sigma','tau','cleanup','lwLine','colors','simplify','blur','lwVec','gamma','smooth','spacing','thr','detail'];
+const SHOWN = ['res','sigma','tau','cleanup','lwLine','colors','simplify','blur','lwVec'];
 SHOWN.forEach(id => {
   const show = () => { const v = $(id + 'V'); if (v) v.textContent = $(id).value; };
   $(id).addEventListener('input', show); show();
 });
-
-function syncGroups() {
-  const mode = $('mode').value;
-  const want = mode === 'line' ? 'line' : mode === 'vector' ? 'vector' : 'sketch';
-  document.querySelectorAll('.grp').forEach(g => { g.hidden = g.dataset.grp !== want; });
-}
-$('mode').addEventListener('change', syncGroups);
-syncGroups();
 
 $('file').addEventListener('change', e => {
   const f = e.target.files[0];
@@ -113,28 +86,52 @@ $('file').addEventListener('change', e => {
   im.src = URL.createObjectURL(f);
 });
 
-// Image -> canvas at limited resolution.
+// Scale to the working resolution in both directions: a small source has too
+// few pixels for any renderer to find strokes, so upscale rather than trace a
+// thumbnail. Capped so a tiny icon does not become mush.
 function drawToCanvas() {
   const R = +$('res').value;
-  const s = Math.min(1, R / Math.max(img.width, img.height));
+  const s = Math.min(4, R / Math.max(img.width, img.height));
   const w = Math.max(8, Math.round(img.width * s));
   const h = Math.max(8, Math.round(img.height * s));
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, w, h);
   return { ctx, w, h };
 }
 
-function gridFrom(ctx, w, h, gamma) {
+function gridFrom(ctx, w, h) {
   const px = ctx.getImageData(0, 0, w, h).data;
-  const gam = gamma === undefined ? +$('gamma').value : gamma;
   const v = new Float32Array(w * h);
   for (let i = 0; i < w * h; i++) {
     const L = (0.299 * px[4*i] + 0.587 * px[4*i+1] + 0.114 * px[4*i+2]) / 255;
-    v[i] = Math.pow(1 - L, gam);
+    v[i] = 1 - L;
   }
   return { w, h, v };
+}
+
+// flat   -> two-tone art: exact threshold keeps shapes crisp
+// sketch -> ink on light paper: XDoG keeps faint strokes connected
+// photo  -> continuous tone: flat-colour outline trace is the only one that holds a face
+function classify(ctx, w, h) {
+  const px = ctx.getImageData(0, 0, w, h).data;
+  const n = w * h;
+  let flat = 0, dark = 0, sum = 0;
+  for (let i = 0; i < n; i++) {
+    const L = (0.299 * px[4*i] + 0.587 * px[4*i+1] + 0.114 * px[4*i+2]) / 255;
+    sum += L;
+    if (L < 0.2 || L > 0.8) flat++;
+    if (L < 0.35) dark++;
+  }
+  const mean = sum / n;
+  const flatFrac = flat / n;
+  const darkFrac = dark / n;
+  if (flatFrac > 0.85) return 'flat';
+  if (mean > 0.62 && darkFrac > 0.005 && darkFrac < 0.35) return 'sketch';
+  return 'photo';
 }
 
 function viewport(gw, gh) {
@@ -148,20 +145,6 @@ function viewport(gw, gh) {
   return { W, H, sc, ox, oy };
 }
 
-// Flat two-tone art (icons, logos) has no gradients for XDoG to work on; it
-// just needs a threshold, which is exact and keeps the shapes crisp.
-function isBitonal(ctx, w, h) {
-  const px = ctx.getImageData(0, 0, w, h).data;
-  const n = w * h;
-  let flat = 0;
-  for (let i = 0; i < n; i++) {
-    const L = (0.299 * px[4*i] + 0.587 * px[4*i+1] + 0.114 * px[4*i+2]) / 255;
-    if (L < 0.2 || L > 0.8) flat++;
-  }
-  return flat / n > 0.85;
-}
-
-// Polylines -> one smooth path of quadratic segments.
 function strokePath(lines, X, Y) {
   let d = '';
   for (const pts of lines) {
@@ -204,32 +187,56 @@ function renderVector(tracerSvg, gw, gh, filled, lw) {
   return paths.length;
 }
 
-function renderTone(art) {
-  const { W, H, sc, ox, oy } = viewport(art.gridW, art.gridH);
-  const X = x => ox + x*sc, Y = y => oy + y*sc;
-  let html = `<rect width="${W}" height="${H}" fill="#fff"/>`;
-
-  if (art.hatch && art.hatch.strokes.length) {
-    const buckets = new Map();
-    for (const st of art.hatch.strokes) {
-      const key = Math.round(st.width * 4) / 4;
-      let d = buckets.get(key) || '';
-      d += `M${X(st.xs[0]).toFixed(1)} ${Y(st.ys[0]).toFixed(1)}`;
-      for (let i = 1; i < st.xs.length; i++) {
-        d += `L${X(st.xs[i]).toFixed(1)} ${Y(st.ys[i]).toFixed(1)}`;
-      }
-      buckets.set(key, d);
+function runLine(ctx, w, h, kind) {
+  const cleanup = +$('cleanup').value;
+  const bitonal = kind === 'flat';
+  const art = buildCenterlineFromInk(gridFrom(ctx, w, h), {
+    ink: 0.5,
+    minBlob: Math.round(cleanup * 1.5),
+    minStrokeLen: cleanup,
+    eps: 1.0,
+    smoothIters: 3,
+    stitch: 2.5,
+    xdog: bitonal ? null : {
+      sigma: +$('sigma').value,
+      k: 1.6,
+      p: 0.98,
+      tau: +$('tau').value
     }
-    for (const [wgt, d] of buckets) {
-      html += `<path d="${d}" fill="none" stroke="#000" stroke-width="${Math.min(0.75, wgt).toFixed(2)}" stroke-linecap="round"/>`;
-    }
-  }
+  });
+  const lw = +$('lwLine').value;
+  renderLines(art.lines, w, h, lw);
+  lastArt = { kind: 'line', lines: art.lines, gridW: w, gridH: h, lw };
+  return `${art.count} strokes, ${art.points} points`;
+}
 
-  if (art.curves && art.curves.lines.length) {
-    html += `<path d="${strokePath(art.curves.lines, X, Y)}" fill="none" stroke="#000" stroke-width="1.05" stroke-linecap="round" stroke-linejoin="round"/>`;
+function runVector(ctx, w, h) {
+  if (typeof ImageTracer === 'undefined') throw new Error('tracer failed to load');
+  const opts = {
+    numberofcolors: +$('colors').value,
+    ltres: 2, qtres: 2,
+    pathomit: +$('simplify').value,
+    rightangleenhance: true,
+    blurradius: +$('blur').value,
+    strokewidth: 0,
+    linefilter: false,
+    scale: 1, roundcoords: 2, viewbox: true, desc: false
+  };
+  const imgd = ctx.getImageData(0, 0, w, h);
+  let svgStr = ImageTracer.imagedataToSVG(imgd, opts);
+  // A photographic source can shatter into thousands of scraps; raise the
+  // path-size floor until the count is drawable.
+  let nPaths = (svgStr.match(/<path /g) || []).length;
+  for (let tries = 0; nPaths > 900 && tries < 3; tries++) {
+    opts.pathomit = Math.min(80, opts.pathomit + 25);
+    svgStr = ImageTracer.imagedataToSVG(imgd, opts);
+    nPaths = (svgStr.match(/<path /g) || []).length;
   }
-
-  $('svg').innerHTML = html;
+  const filled = $('fill').checked;
+  const lw = +$('lwVec').value;
+  const n = renderVector(svgStr, w, h, filled, lw);
+  lastArt = { kind: 'vector', vector: svgStr, gridW: w, gridH: h, filled, lw };
+  return `${n} paths, ${+$('colors').value} colours`;
 }
 
 $('draw').addEventListener('click', () => {
@@ -237,88 +244,21 @@ $('draw').addEventListener('click', () => {
   $('info').textContent = 'Drawing...';
   setTimeout(() => {
     try {
-      const mode = $('mode').value;
       const { ctx, w, h } = drawToCanvas();
       const t0 = performance.now();
+      const chosen = $('mode').value;
+      const kind = chosen === 'auto' ? classify(ctx, w, h) : (chosen === 'line' ? 'sketch' : 'photo');
 
-      if (mode === 'line') {
-        const cleanup = +$('cleanup').value;
-        const bitonal = isBitonal(ctx, w, h);
-        const art = buildCenterlineFromInk(gridFrom(ctx, w, h, 1), {
-          ink: 0.5,
-          minBlob: Math.round(cleanup * 1.5),
-          minStrokeLen: cleanup,
-          eps: 1.0,
-          smoothIters: 3,
-          stitch: 2.5,
-          xdog: bitonal ? null : {
-            sigma: +$('sigma').value,
-            k: 1.6,
-            p: 0.98,
-            tau: +$('tau').value
-          }
-        });
-        const lw = +$('lwLine').value;
-        renderLines(art.lines, w, h, lw);
-        lastArt = { kind: 'line', lines: art.lines, gridW: w, gridH: h, lw };
-        $('info').textContent = `${art.count} strokes, ${art.points} points, ${Math.round(performance.now() - t0)}ms${bitonal ? ' (flat art)' : ''}.`;
-        return;
+      let summary;
+      if (chosen === 'vector' || (chosen === 'auto' && kind === 'photo')) {
+        summary = runVector(ctx, w, h);
+      } else {
+        summary = runLine(ctx, w, h, kind);
       }
 
-      if (mode === 'vector') {
-        if (typeof ImageTracer === 'undefined') throw new Error('tracer failed to load');
-        const opts = {
-          numberofcolors: +$('colors').value,
-          ltres: 2, qtres: 2,
-          pathomit: +$('simplify').value,
-          rightangleenhance: true,
-          blurradius: +$('blur').value,
-          strokewidth: 0,
-          linefilter: false,
-          scale: 1, roundcoords: 2, viewbox: true, desc: false
-        };
-        const imgd = ctx.getImageData(0, 0, w, h);
-        let svgStr = ImageTracer.imagedataToSVG(imgd, opts);
-        // A photographic or sketchy source can shatter into thousands of scraps.
-        // Raise the path-size floor until the count is drawable.
-        let nPaths = (svgStr.match(/<path /g) || []).length;
-        for (let tries = 0; nPaths > 900 && tries < 3; tries++) {
-          opts.pathomit = Math.min(80, opts.pathomit + 25);
-          svgStr = ImageTracer.imagedataToSVG(imgd, opts);
-          nPaths = (svgStr.match(/<path /g) || []).length;
-        }
-        const filled = $('fill').checked;
-        const lw = +$('lwVec').value;
-        const n = renderVector(svgStr, w, h, filled, lw);
-        lastArt = { kind: 'vector', vector: svgStr, gridW: w, gridH: h, filled, lw };
-        $('info').textContent = `${n} paths, ${+$('colors').value} colours, ${Math.round(performance.now() - t0)}ms.`;
-        return;
-      }
-
-      const grid = gridFrom(ctx, w, h);
-      const wantHatch = mode === 'hatch' || mode === 'both';
-      const wantCurves = mode === 'both';
-      let hatch = null, curves = null;
-      if (wantHatch) {
-        hatch = buildLineArt(grid, {
-          preBlur: +$('smooth').value,
-          spacing: +$('spacing').value,
-          thr: +$('thr').value,
-          edgePass: false
-        });
-      }
-      if (wantCurves) {
-        const gate = 0.02 + (+$('detail').value - 1) * 0.02;
-        curves = buildSketch(grid, { sigmas: [1.2, 3.0], gate, eps: 0.6, smoothIters: 2 });
-      }
-      lastArt = { kind: 'tone', hatch, curves, gridW: grid.w, gridH: grid.h };
-      renderTone(lastArt);
-
-      const parts = [];
-      if (hatch) parts.push(`${hatch.strokes.length} hatch strokes`);
-      if (curves) parts.push(`${curves.count} curves`);
-      parts.push(`${Math.round(performance.now() - t0)}ms`);
-      $('info').textContent = parts.join(', ') + '.';
+      const ms = Math.round(performance.now() - t0);
+      const label = chosen === 'auto' ? `auto: ${kind}` : chosen;
+      $('info').textContent = `${summary}, ${ms}ms (${label}).`;
     } catch (err) {
       $('info').textContent = 'Error: ' + err.message;
       throw err;
@@ -351,7 +291,6 @@ function redraw() {
   if (!lastArt) return;
   if (lastArt.kind === 'line') renderLines(lastArt.lines, lastArt.gridW, lastArt.gridH, lastArt.lw);
   else if (lastArt.kind === 'vector') renderVector(lastArt.vector, lastArt.gridW, lastArt.gridH, lastArt.filled, lastArt.lw);
-  else renderTone(lastArt);
 }
 
 let rt;
