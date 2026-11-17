@@ -302,6 +302,25 @@ function arcLength(pts) {
   return len;
 }
 
+// XDoG: extended difference-of-Gaussians. The standard formulation for pulling
+// continuous ink lines out of a sketch or photo. A plain threshold turns
+// shading into blobs; the difference of two blurs keeps edges and discards
+// slow tone changes, so strokes stay connected and even in width.
+function xdogMask(v, w, h, o) {
+  const sigma = o.sigma === undefined ? 1.2 : o.sigma;
+  const k = o.k === undefined ? 1.6 : o.k;
+  const p = o.p === undefined ? 0.98 : o.p;
+  const tau = o.tau === undefined ? 0.5 : o.tau;
+  const b1 = sk2Gauss(v, w, h, sigma);
+  const b2 = sk2Gauss(v, w, h, sigma * k);
+  const mask = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const d = (1 + p) * b1[i] - p * b2[i];
+    mask[i] = d >= tau ? 1 : 0;
+  }
+  return mask;
+}
+
 // Single-line strokes from flat two-tone art: threshold the ink, thin it to a
 // 1px skeleton, then walk the skeleton into strokes. Tracing region outlines
 // instead would trace both edges of every stroke and read as doubled lines.
@@ -317,14 +336,20 @@ function buildCenterlineFromInk(grid, o) {
     eps: 0.8,
     smoothIters: 2,
     stitch: 2.5        // px: join fragments that meet at junctions
+    ,xdog: null        // {sigma,k,p,tau}: XDoG ink extraction instead of a threshold
   }, o || {});
 
   const { w, h } = grid;
   const v = opts.blur > 0 ? sk2BoxBlur(grid.v, w, h, opts.blur) : grid.v;
-  const mask = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) {
-    const on = opts.invert ? v[i] < opts.ink : v[i] >= opts.ink;
-    mask[i] = on ? 1 : 0;
+  let mask;
+  if (opts.xdog) {
+    mask = xdogMask(v, w, h, opts.xdog);
+  } else {
+    mask = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const on = opts.invert ? v[i] < opts.ink : v[i] >= opts.ink;
+      mask[i] = on ? 1 : 0;
+    }
   }
 
   dropSmallBlobs(mask, w, h, opts.minBlob);
