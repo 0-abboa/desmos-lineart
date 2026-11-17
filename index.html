@@ -43,6 +43,7 @@
       <input type="range" id="blur" min="0" max="3" step="1" value="2"></label>
     <label>Line width <span id="lwV"></span>
       <input type="range" id="lw" min="0.4" max="2.4" step="0.1" value="0.9"></label>
+    <label><input type="checkbox" id="fill" /> Fill shapes (icons, logos)</label>
   </div>
 
   <div class="grp" data-grp="sketch" hidden>
@@ -152,7 +153,7 @@ function viewport(gw, gh) {
 }
 
 // ---- vector trace: real Bezier outlines ----
-function renderVector(tracerSvg, gw, gh) {
+function renderVector(tracerSvg, gw, gh, filled) {
   const { W, H, sc, ox, oy } = viewport(gw, gh);
   const doc = new DOMParser().parseFromString(tracerSvg, 'image/svg+xml');
   const paths = Array.from(doc.querySelectorAll('path'));
@@ -161,7 +162,11 @@ function renderVector(tracerSvg, gw, gh) {
   for (const p of paths) {
     const d = p.getAttribute('d');
     if (!d) continue;
-    html += `<path d="${d}" fill="none" stroke="#000" stroke-width="${lw}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    // Outlining a thick stroke traces both of its edges, which reads as a
+    // doubled line; keeping the traced fills reproduces the shape faithfully.
+    const fill = filled ? (p.getAttribute('fill') || '#000') : 'none';
+    const stroke = filled ? 'none' : '#000';
+    html += `<path d="${d}" fill="${fill}" stroke="${stroke}" stroke-width="${lw}" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
   html += '</g>';
   $('svg').innerHTML = html;
@@ -226,6 +231,7 @@ $('draw').addEventListener('click', () => {
           $('blur').value = 1;
           ['colors', 'simplify', 'blur'].forEach(id => { $(id + 'V').textContent = $(id).value; });
         }
+        $('fill').checked = bitonal;
         const opts = {
           // Force 2 for flat art: a third entry lands on the anti-aliasing halo
           // and explodes one shape into hundreds of scraps.
@@ -240,9 +246,10 @@ $('draw').addEventListener('click', () => {
         };
         const imgd = ctx.getImageData(0, 0, w, h);
         const svgStr = ImageTracer.imagedataToSVG(imgd, opts);
-        const n = renderVector(svgStr, w, h);
+        const filled = $('fill').checked;
+        const n = renderVector(svgStr, w, h, filled);
         const ms = Math.round(performance.now() - t0);
-        lastArt = { vector: svgStr, gridW: w, gridH: h };
+        lastArt = { vector: svgStr, gridW: w, gridH: h, filled };
         $('info').textContent = `${n} curves, ${bitonal ? 2 : +$('colors').value} colours, ${ms}ms${bitonal ? ' (flat art detected)' : ''}.`;
         return;
       }
@@ -304,7 +311,7 @@ window.addEventListener('resize', () => {
   clearTimeout(rt);
   rt = setTimeout(() => {
     if (!lastArt) return;
-    if (lastArt.vector) renderVector(lastArt.vector, lastArt.gridW, lastArt.gridH);
+    if (lastArt.vector) renderVector(lastArt.vector, lastArt.gridW, lastArt.gridH, lastArt.filled);
     else renderTone(lastArt);
   }, 150);
 });
