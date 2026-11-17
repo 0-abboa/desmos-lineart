@@ -223,6 +223,134 @@ function buildCenterline(grid, o) {
   return { lines, count: lines.length, points: total, gridW: w, gridH: h };
 }
 
+// Join stroke ends that meet (or nearly meet) into longer continuous strokes.
+// The skeleton walker stops at every junction and at already-visited pixels,
+// which fragments a closed outline into arcs with visible gaps.
+function stitchLines(lines, tol) {
+  if (!tol || tol <= 0) return lines;
+  const used = new Array(lines.length).fill(false);
+  const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]);
+  const out = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    if (used[i]) continue;
+    used[i] = true;
+    let cur = lines[i].slice();
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let j = 0; j < lines.length; j++) {
+        if (used[j]) continue;
+        const seg = lines[j];
+        const first = cur[0], last = cur[cur.length - 1];
+        const s = seg[0], e = seg[seg.length - 1];
+        if (dist(last, s) <= tol) {
+          cur = cur.concat(seg.slice(1));
+        } else if (dist(last, e) <= tol) {
+          cur = cur.concat(seg.slice(0, -1).reverse());
+        } else if (dist(first, e) <= tol) {
+          cur = seg.slice(0, -1).concat(cur);
+        } else if (dist(first, s) <= tol) {
+          cur = seg.slice().reverse().slice(0, -1).concat(cur);
+        } else {
+          continue;
+        }
+        used[j] = true;
+        changed = true;
+      }
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
+// Drop ink blobs smaller than minArea. Pencil grain and JPEG specks otherwise
+// survive thinning as hundreds of one-pixel squiggles.
+function dropSmallBlobs(mask, w, h, minArea) {
+  if (!minArea || minArea <= 1) return mask;
+  const seen = new Uint8Array(w * h);
+  const stack = [];
+  for (let i = 0; i < w * h; i++) {
+    if (!mask[i] || seen[i]) continue;
+    stack.length = 0;
+    stack.push(i);
+    seen[i] = 1;
+    const comp = [];
+    while (stack.length) {
+      const p = stack.pop();
+      comp.push(p);
+      const x = p % w, y = (p - x) / w;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const q = ny * w + nx;
+          if (mask[q] && !seen[q]) { seen[q] = 1; stack.push(q); }
+        }
+      }
+    }
+    if (comp.length < minArea) for (const p of comp) mask[p] = 0;
+  }
+  return mask;
+}
+
+function arcLength(pts) {
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) {
+    len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  }
+  return len;
+}
+
+// Single-line strokes from flat two-tone art: threshold the ink, thin it to a
+// 1px skeleton, then walk the skeleton into strokes. Tracing region outlines
+// instead would trace both edges of every stroke and read as doubled lines.
+function buildCenterlineFromInk(grid, o) {
+  const opts = Object.assign({
+    ink: 0.5,          // darkness at or above this counts as ink
+    invert: false,
+    blur: 0,           // pre-blur radius: averages out pencil grain
+    minBlob: 0,        // drop ink components smaller than this many pixels
+    minStrokeLen: 0,   // drop traced strokes shorter than this (spurs, specks)
+    minPts: 6,
+    minSpan: 6,
+    eps: 0.8,
+    smoothIters: 2,
+    stitch: 2.5        // px: join fragments that meet at junctions
+  }, o || {});
+
+  const { w, h } = grid;
+  const v = opts.blur > 0 ? sk2BoxBlur(grid.v, w, h, opts.blur) : grid.v;
+  const mask = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const on = opts.invert ? v[i] < opts.ink : v[i] >= opts.ink;
+    mask[i] = on ? 1 : 0;
+  }
+
+  dropSmallBlobs(mask, w, h, opts.minBlob);
+  const sk = thin(mask, w, h);
+  let raw = traceSkeleton(sk, w, h, opts.minPts);
+  if (opts.minStrokeLen > 0) raw = raw.filter((pts) => arcLength(pts) >= opts.minStrokeLen);
+  raw = stitchLines(raw, opts.stitch);
+
+  const lines = [];
+  let total = 0;
+  for (const pts of raw) {
+    const simp = sk2Rdp(pts, opts.eps);
+    if (simp.length < 2) continue;
+    let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+    for (const [px, py] of simp) {
+      if (px < minX) minX = px; if (px > maxX) maxX = px;
+      if (py < minY) minY = py; if (py > maxY) maxY = py;
+    }
+    if (Math.hypot(maxX - minX, maxY - minY) < opts.minSpan) continue;
+    lines.push(opts.smoothIters ? sk2Chaikin(simp, opts.smoothIters) : simp);
+    total += simp.length;
+  }
+
+  return { lines, count: lines.length, points: total, gridW: w, gridH: h };
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { buildCenterline, thin, traceSkeleton, sk2Rdp, sk2Chaikin };
+  module.exports = { buildCenterline, buildCenterlineFromInk, thin, traceSkeleton, sk2Rdp, sk2Chaikin };
 }
