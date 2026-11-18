@@ -74,7 +74,7 @@
 <script src="skeleton.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-let img = null, lastArt = null, lastExport = null;
+let img = null, lastArt = null, lastExport = null, lastBgColor = 'rgb(255,255,255)';
 
 const SHOWN = ['res','sigma','tau','cleanup','lwLine','colors','simplify','blur','lwVec'];
 SHOWN.forEach(id => {
@@ -316,7 +316,7 @@ function buildDesmosExpressions(shapes, palette, w, h) {
   // The base canvas is kept in its own first expression: no backdrop can show
   // through, and draw order inside a single expression is not guaranteed.
   const exprs = [`\\operatorname{polygon}\\left(\\left(0,0\\right),\\left(${(w*sc).toFixed(2)},0\\right),\\left(${(w*sc).toFixed(2)},${(h*sc).toFixed(2)}\\right),\\left(0,${(h*sc).toFixed(2)}\\right)\\right)`];
-  const legend = [{ label: 'base canvas', n: 1, color: 'rgb(255,255,255)' }];
+  const legend = [{ label: 'base canvas', n: 1, color: lastBgColor }];
   for (const li of [...byLayer.keys()].sort((a, b) => a - b)) {
     const calls = byLayer.get(li);
     exprs.push(calls.join(','));
@@ -370,6 +370,7 @@ function flattenBackground(ctx, w, h, tol) {
     stack.push(x - 1, y, x + 1, y, x, y - 1, x, y + 1);
   }
   ctx.putImageData(imgd, 0, 0);
+  lastBgColor = `rgb(${br},${bg},${bb})`;
   return painted;
 }
 
